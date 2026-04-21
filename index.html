@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Custas — Calculadora de Custas de Parte</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=3" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">C</div>
+    <div>Custas <span class="brand-sub">· Calculadora de Custas de Parte</span></div>
+  </div>
+  <div class="topbar-actions">
+    <button class="iconbtn" onclick="openDrawer()" title="Tabelas de referência">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="14" height="13" rx="1.5"/><path d="M3 8h14M7 4v13"/></svg>
+      Tabelas
+    </button>
+    <button class="iconbtn" onclick="resetAll()" title="Limpar">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 10a6 6 0 1 1 2 4.5"/><path d="M4 5v4h4"/></svg>
+      Limpar
+    </button>
+  </div>
+</header>
+
+<div class="app">
+
+<main class="main">
+
+  <nav class="steps" id="steps" role="tablist">
+    <button class="step active" data-step="1" role="tab"><span class="step-num"><span>1</span></span> Processo &amp; partes</button>
+    <button class="step"        data-step="2" role="tab"><span class="step-num"><span>2</span></span> Instâncias</button>
+    <button class="step"        data-step="3" role="tab"><span class="step-num"><span>3</span></span> Encargos &amp; honorários</button>
+    <button class="step"        data-step="4" role="tab"><span class="step-num"><span>4</span></span> Nota</button>
+  </nav>
+
+  <!-- STEP 1 — Processo & partes -->
+  <section class="panel active" data-panel="1">
+    <div class="panel-head">
+      <h1 class="panel-title">Processo e partes</h1>
+      <p class="panel-desc">Indique o valor da ação, o seu cliente e as restantes partes com o respetivo decaimento. O decaimento de 0% significa que a parte venceu totalmente.</p>
+    </div>
+
+    <div class="field full" style="margin-bottom:1.5rem;">
+      <div class="label">
+        <span>Valor da ação</span>
+        <span class="label-help" data-tip="Valor fixado na sentença (arts. 296.º–303.º CPC). Base para o cálculo da TJ em litisconsórcio e partes autónomas.">arts. 296.º–303.º CPC</span>
+      </div>
+      <div class="affix">
+        <span class="affix-pre">€</span>
+        <input type="number" id="valorAcao" min="0" step="0.01" placeholder="500000,00" />
+      </div>
+      <div class="hint" id="valorHint">Introduza o valor da ação para ver o escalão aplicável.</div>
+    </div>
+
+    <div class="subsection-title">O meu cliente</div>
+    <div class="hint" style="margin-bottom:.75rem;">A parte que representa e em nome de quem apresenta a nota de custas.</div>
+    <div id="clienteWrap"></div>
+
+    <div class="subsection-title" style="margin-top:1.75rem;">Restantes partes</div>
+    <div class="hint" style="margin-bottom:.75rem;">Inclua todas as partes do processo — tanto as que venceram (decaimento 0%) como as que perderam (decaimento &gt; 0%). As partes que venceram entram no cálculo da Rubrica C.</div>
+    <div id="partesWrap"></div>
+    <button class="btn-add" id="btnAddParte">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 5v10M5 10h10"/></svg>
+      Adicionar parte
+    </button>
+
+    <div class="nav">
+      <button class="btn btn-secondary" disabled>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l-5 5 5 5"/></svg>
+        Anterior
+      </button>
+      <button class="btn btn-primary" onclick="goStep(2)">
+        Continuar para instâncias
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 5l5 5-5 5"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- STEP 2 — Instâncias -->
+  <section class="panel" data-panel="2">
+    <div class="panel-head">
+      <h1 class="panel-title">Instâncias e taxas de justiça</h1>
+      <p class="panel-desc">Para cada instância, indique a TJ efetivamente paga por cada parte. A TJ teórica é calculada automaticamente — será assinalada uma divergência caso o valor introduzido não coincida. O remanescente (valor da ação &gt; € 275.000) é calculado automaticamente na nota final.</p>
+    </div>
+
+    <div id="instList"></div>
+    <button class="btn-add" id="btnAddInst">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 5v10M5 10h10"/></svg>
+      Adicionar instância ou incidente
+    </button>
+
+    <div class="switch-row" style="margin-top:1.25rem;">
+      <div class="switch-info">
+        <div class="lbl">Estimar remanescente como se pago <span style="color:var(--muted); font-weight:400;">(art. 6.º/7 RCP)</span></div>
+        <div class="sub">Inclui o remanescente estimado de todas as partes no somatório da Rubrica C, como se já tivesse sido pago. Use quando a ação tem valor superior a € 275 000 e pretende apresentar a nota antes do pagamento do remanescente.</div>
+      </div>
+      <label class="sw"><input type="checkbox" id="estimarRem" /><span class="sl"></span></label>
+    </div>
+
+    <div class="nav">
+      <button class="btn btn-secondary" onclick="goStep(1)">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l-5 5 5 5"/></svg>
+        Anterior
+      </button>
+      <button class="btn btn-primary" onclick="goStep(3)">
+        Continuar
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 5l5 5-5 5"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- STEP 3 — Encargos & honorários -->
+  <section class="panel" data-panel="3">
+    <div class="panel-head">
+      <h1 class="panel-title">Encargos e honorários</h1>
+      <p class="panel-desc">Rubrica B — encargos comprovados. Rubrica C — compensação de honorários (pode ser limitada ao valor real, art. 26.º/5 RCP).</p>
+    </div>
+
+    <div style="margin-bottom:1.75rem;">
+      <div class="label" style="margin-bottom:.65rem;"><span>Encargos (Rubrica B)</span></div>
+      <div id="encList"></div>
+      <button class="btn-add" onclick="addEnc()">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 5v10M5 10h10"/></svg>
+        Adicionar encargo
+      </button>
+      <div class="hint" style="margin-top:.5rem;">Perícias, certidões, notificações, traduções, etc. — documentar com comprovativos.</div>
+    </div>
+
+    <div>
+      <div class="switch-row">
+        <div class="switch-info">
+          <div class="lbl">Limitar ao valor real dos honorários <span style="color:var(--muted); font-weight:400;">(art. 26.º/5 RCP)</span></div>
+          <div class="sub">Se os honorários pagos forem inferiores ao limite de 50%, a compensação fica limitada ao valor real.</div>
+        </div>
+        <label class="sw"><input type="checkbox" id="limHon" /><span class="sl"></span></label>
+      </div>
+      <div id="honField" style="display:none; margin-top:.75rem;" class="field">
+        <div class="label"><span>Honorários reais pagos</span></div>
+        <div class="affix">
+          <span class="affix-pre">€</span>
+          <input type="number" id="honReais" min="0" step="0.01" placeholder="8000,00" />
+        </div>
+      </div>
+    </div>
+
+    <div class="nav">
+      <button class="btn btn-secondary" onclick="goStep(2)">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l-5 5 5 5"/></svg>
+        Anterior
+      </button>
+      <button class="btn btn-primary" onclick="goStep(4)">
+        Ver nota final
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 5l5 5-5 5"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- STEP 4 — Nota final -->
+  <section class="panel" data-panel="4">
+    <div class="panel-head">
+      <h1 class="panel-title">Nota discriminativa e justificativa</h1>
+      <p class="panel-desc">Arts. 25.º e 26.º RCP. Verifique os valores antes de apresentar em juízo — sujeitos a conferência pela secretaria.</p>
+    </div>
+    <div id="resultBody"></div>
+    <div class="nav">
+      <button class="btn btn-secondary" onclick="goStep(3)">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l-5 5 5 5"/></svg>
+        Editar
+      </button>
+      <button class="btn btn-primary" onclick="window.print()">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7V3h8v4M6 15H4v-5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5h-2M6 12h8v5H6z"/></svg>
+        Imprimir / PDF
+      </button>
+    </div>
+  </section>
+
+  <footer class="footnote">
+    <strong>Ferramenta de uso interno.</strong> Os valores apresentados são estimativas sujeitas a conferência pela secretaria judicial. UC = € 102,00 (confirmar anualmente). Baseado no RCP (DL 34/2008), CPC e Portaria 419-A/2009.
+  </footer>
+</main>
+
+<aside class="summary" id="summary">
+  <div class="summary-head" onclick="toggleSummaryMobile()">
+    <span class="summary-title">Total da nota</span>
+    <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 8l5 5 5-5"/></svg>
+  </div>
+  <div class="summary-body">
+    <div class="big-total empty" id="bigTotal"><span class="currency">€</span>0,00</div>
+    <div class="big-label" id="bigLabel">Preencha o valor da causa para começar</div>
+    <div class="big-sub" id="bigSub" style="display:none;"></div>
+
+    <div class="summary-bar" id="summaryBar" style="display:none;">
+      <span class="a" style="width: 0%"></span>
+      <span class="b" style="width: 0%"></span>
+      <span class="c" style="width: 0%"></span>
+    </div>
+
+    <div class="mini-bars" id="miniBars" style="display:none;">
+      <div class="mini-bar"><span class="mini-bar-dot a"></span><span class="mini-bar-label">A · TJ vencedor</span><span class="mini-bar-val" id="mbA">—</span></div>
+      <div class="mini-bar"><span class="mini-bar-dot b"></span><span class="mini-bar-label">B · Encargos</span><span class="mini-bar-val" id="mbB">—</span></div>
+      <div class="mini-bar"><span class="mini-bar-dot c"></span><span class="mini-bar-label">C · Honorários</span><span class="mini-bar-val" id="mbC">—</span></div>
+    </div>
+
+    <div class="checklist" id="checklist">
+      <button class="check current" onclick="goStep(1)"><span class="check-dot"></span>Processo e partes</button>
+      <button class="check" onclick="goStep(2)"><span class="check-dot"></span>Instâncias</button>
+      <button class="check" onclick="goStep(3)"><span class="check-dot"></span>Encargos &amp; honorários</button>
+      <button class="check" onclick="goStep(4)"><span class="check-dot"></span>Nota final</button>
+    </div>
+  </div>
+</aside>
+
+</div>
+
+<div class="drawer-scrim" id="drawerScrim" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true">
+  <div class="drawer-head">
+    <div class="drawer-title">Tabelas de referência — RCP</div>
+    <button class="iconbtn" onclick="closeDrawer()"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5L5 15"/></svg>Fechar</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<script src="logic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
