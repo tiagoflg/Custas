@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
 
@@ -43,7 +43,18 @@
   <section class="panel active" data-panel="1">
     <div class="panel-head">
       <h1 class="panel-title">Processo e partes</h1>
-      <p class="panel-desc">Indique o valor da ação, o seu cliente e as restantes partes com o respetivo decaimento. O decaimento de 0% significa que a parte venceu totalmente.</p>
+      <p class="panel-desc">Identifique o processo e as partes. O decaimento global de cada parte pode ser refinado por instância no Passo 2.</p>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom:1.25rem;">
+      <div class="field">
+        <div class="label"><span>Número do processo</span></div>
+        <input type="text" id="numProcesso" placeholder="ex: 1234/20.5T8LSB" />
+      </div>
+      <div class="field">
+        <div class="label"><span>Tribunal</span></div>
+        <input type="text" id="tribunal" placeholder="ex: Juízo Central Cível de Lisboa — J2" />
+      </div>
     </div>
 
     <div class="field full" style="margin-bottom:1.5rem;">
@@ -86,7 +97,7 @@
   <section class="panel" data-panel="2">
     <div class="panel-head">
       <h1 class="panel-title">Instâncias e taxas de justiça</h1>
-      <p class="panel-desc">Para cada instância, indique a TJ efetivamente paga por cada parte. A TJ teórica é calculada automaticamente — será assinalada uma divergência caso o valor introduzido não coincida. O remanescente (valor da ação &gt; € 275.000) é calculado automaticamente na nota final.</p>
+      <p class="panel-desc">Para cada instância, indique a TJ efetivamente paga por cada parte e, se aplicável, a percentagem de dispensa do remanescente (art. 6.º/7 RCP). O decaimento pode ser diferenciado por instância em cada parte (Passo 1).</p>
     </div>
 
     <div id="instList"></div>
@@ -173,6 +184,10 @@
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5l-5 5 5 5"/></svg>
         Editar
       </button>
+      <button class="btn btn-secondary" id="btnExportar" onclick="exportarNotas()">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 13v4h12v-4M10 3v9M6 8l4 4 4-4"/></svg>
+        Exportar nota (.docx)
+      </button>
       <button class="btn btn-primary" onclick="window.print()">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 7V3h8v4M6 15H4v-5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5h-2M6 12h8v5H6z"/></svg>
         Imprimir / PDF
@@ -227,7 +242,10 @@
   <div class="drawer-body" id="drawerBody"></div>
 </aside>
 
+<script src="jszip.min.js"></script>
+<script src="docx_template.js"></script>
 <script src="logic.js"></script>
 <script src="app.js"></script>
+<script src="export.js"></script>
 </body>
 </html>

@@ -16,7 +16,7 @@ const S = {
 
 const $  = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
-const num = (v, d = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
+const num = (v, d = 0) => { const n = parseFloat(v); if (!Number.isFinite(n)) return d; return Math.round(n * 1e6) / 1e6; };
 
 function getValorAcao() { return num($('#valorAcao')?.value); }
 function getCliente()   { return S.partes.find(p => p.id === S.clienteId); }
@@ -36,6 +36,8 @@ function addParte(isCliente = false) {
     nome: isCliente ? 'O meu cliente' : 'Parte ' + (nRestantes + 1),
     relacao: 'litis',
     decaimento: isCliente ? 0 : 100,
+    decaimentoInst: {},       // decaimento específico por instância (instId → %)
+    decPorInst: false,        // toggle: usa decaimento global ou por instância
     membros: [{ id: membroId, nome: isCliente ? 'Cliente' : 'Membro 1', valorPedido: 0, decaimento: null }],
   };
   S.partes.push(parte);
@@ -61,6 +63,8 @@ function renderParteRow(parte, isCliente) {
         <div class="label"><span>${isCliente ? 'Nome / identificação do cliente' : 'Nome / identificação'}</span></div>
         <input type="text" class="p-nome" value="${parte.nome}" placeholder="${isCliente ? 'ex: A, S.A.' : 'ex: Réu B'}" />
       </div>
+
+
       <div class="field" style="width:200px;">
         <div class="label"><span>Relação material</span></div>
         <select class="p-relacao" data-pid="${parte.id}">
@@ -70,9 +74,12 @@ function renderParteRow(parte, isCliente) {
         </select>
       </div>
       <div class="field" style="width:130px;">
-        <div class="label"><span>${isCliente ? 'Decaimento' : 'Decaimento'}</span></div>
+        <div class="label">
+          <span>Decaimento global</span>
+          <span class="label-help" data-tip="Valor por defeito. Pode ser sobreposto por instância no Passo 2.">default</span>
+        </div>
         <div class="affix">
-          <input type="number" class="p-dec" min="0" max="100" step="0.01" value="${parte.decaimento}" />
+          <input type="number" class="p-dec" min="0" max="100" step="any" value="${parte.decaimento}" />
           <span class="affix-post">%</span>
         </div>
       </div>
@@ -91,6 +98,41 @@ function renderParteRow(parte, isCliente) {
   container.appendChild(div);
   div.addEventListener('input', e => onParteInput(e, parte.id, isCliente));
   div.querySelector('.p-relacao').addEventListener('change', e => onRelacaoChange(e, parte.id, isCliente));
+}
+
+/* Gera os campos de decaimento por instância para uma parte */
+function buildDecInstHTML(parte) {
+  if (S.inst.length === 0) {
+    return `<div class="hint" style="font-size:.77rem; margin-bottom:.5rem;">Adicione instâncias no Passo 2 para definir o decaimento por instância.</div>`;
+  }
+  return S.inst.map((inst, idx) => {
+    // Ler tipo do estado S.inst (não do DOM, que pode não estar visível no Passo 1)
+    const tipo = inst.tipo || '1inst';
+    const lbl = TIPOS_PRINCIPAIS.find(t => t.v === tipo)?.l || ('Instância #' + (idx + 1));
+    const val = parte.decaimentoInst?.[inst.id] != null ? parte.decaimentoInst[inst.id] : '';
+    return `
+      <div class="dec-inst-row">
+        <div class="dec-inst-label">#${idx + 1} · ${lbl}</div>
+        <div class="affix" style="width:130px;">
+          <input type="number" class="p-dec-inst" data-pid="${parte.id}" data-instid="${inst.id}"
+            min="0" max="100" step="any" value="${val}" placeholder="${parte.decaimento}" />
+          <span class="affix-post">%</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+/* Reconstrói os campos de decaimento por instância de todas as partes */
+function updateDecInstWrap() {
+  S.partes.forEach(parte => {
+    const wrap = $('#dec-inst-wrap-' + parte.id);
+    if (wrap && parte.decPorInst) {
+      wrap.innerHTML = buildDecInstHTML(parte);
+      // rebind input events
+      const card = $('#parte-' + parte.id);
+      if (card) card.addEventListener('input', e => onParteInput(e, parte.id, parte.id === S.clienteId));
+    }
+  });
 }
 
 function renderMembroHTML(parte, membro, idx) {
@@ -176,6 +218,8 @@ function onParteInput(e, parteId, isCliente) {
   if (!parte) return;
   const el = e.target;
   if (el.classList.contains('p-nome')) parte.nome = el.value;
+  if (el.classList.contains('p-mandatario')) parte.mandatario = el.value;
+  if (el.classList.contains('p-artigo')) parte.artigo = el.value;
   if (el.classList.contains('p-dec')) parte.decaimento = num(el.value);
   if (el.classList.contains('m-nome')) {
     const m = parte.membros.find(x => x.id === +el.dataset.mid);
@@ -190,7 +234,33 @@ function onParteInput(e, parteId, isCliente) {
     if (m) m.decaimento = el.value === '' ? null : num(el.value);
   }
   if (el.classList.contains('p-nome') || el.classList.contains('m-nome')) updateInstNomes();
+  // Quando o decaimento global muda, actualizar os labels e placeholders dos campos
+  // de decaimento por instância (i-dec-inst) nos blocos de Passo 2
+  if (el.classList.contains('p-dec')) updateDecInstLabels(parte);
   onAnyInput();
+}
+
+/* Actualiza os labels "global: X%" e o placeholder dos inputs i-dec-inst quando
+   o decaimento global de uma parte muda no Passo 1 */
+function updateDecInstLabels(parte) {
+  $$('.i-dec-inst[data-pid="' + parte.id + '"]').forEach(inp => {
+    inp.placeholder = String(parte.decaimento);
+    // Actualizar o label-help na célula pai
+    const cell = inp.closest('.field');
+    if (cell) {
+      const help = cell.querySelector('.label-help');
+      if (help) {
+        help.dataset.tip = `Deixe em branco para usar o decaimento global definido no Passo 1 (${parte.decaimento}%).`;
+        help.textContent = `global: ${parte.decaimento}%`;
+      }
+    }
+    // Se o campo tiver o valor igual ao novo global, limpar (passa a usar global)
+    if (inp.value !== '' && num(inp.value) === parte.decaimento) {
+      inp.value = '';
+      const instid = +inp.dataset.instid;
+      if (parte.decaimentoInst) delete parte.decaimentoInst[instid];
+    }
+  });
 }
 
 function updateInstNomes() {
@@ -248,7 +318,7 @@ const TIPOS_OPTS = TIPOS_PRINCIPAIS.map(t => `<option value="${t.v}">${t.l}</opt
 
 function addInst() {
   const id = ++S.instIdx;
-  S.inst.push({ id });
+  S.inst.push({ id, tipo: '1inst', dispensaRem: 0 });
   const div = document.createElement('div');
   div.className = 'instance';
   div.id = 'inst-' + id;
@@ -260,6 +330,8 @@ function addInst() {
 function buildInstHTML(id) {
   const nInst = S.inst.length;
   const podeRemover = nInst > 1;
+  const instData = S.inst.find(i => i.id === id) || {};
+  const dispensaVal = instData.dispensaRem != null ? instData.dispensaRem : '';
   return `
     <div class="instance-head">
       <div class="instance-title">
@@ -268,9 +340,23 @@ function buildInstHTML(id) {
       </div>
       ${podeRemover ? `<button class="btn-x" onclick="rmInst(${id})"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5L5 15"/></svg></button>` : ''}
     </div>
-    <div class="field" style="max-width:320px; margin-bottom:.75rem;">
-      <div class="label"><span>Tipo</span></div>
-      <select class="i-tipo">${TIPOS_OPTS}</select>
+    <div class="grid grid-2" style="margin-bottom:.75rem;">
+      <div class="field">
+        <div class="label"><span>Tipo</span></div>
+        <select class="i-tipo">${TIPOS_OPTS}</select>
+      </div>
+      <div class="field">
+        <div class="label">
+          <span>Dispensa do remanescente <span style="color:var(--muted);font-weight:400;">(art. 6.º/7 RCP)</span></span>
+          <span class="label-help" data-tip="0% = sem dispensa (remanescente entra na totalidade). 100% = dispensa total (remanescente não entra). Valores intermédios para dispensa parcial.">%</span>
+        </div>
+        <div class="affix">
+          <input type="number" class="i-dispensa-rem" data-instid="${id}" min="0" max="100" step="any"
+            value="${dispensaVal}" placeholder="0" />
+          <span class="affix-post">%</span>
+        </div>
+        <div class="field-hint">0% = sem dispensa · 100% = dispensa total</div>
+      </div>
     </div>
     <div class="inst-modo-wrap" id="inst-modo-${id}">
       ${buildInstModoHTML(id, '1inst')}
@@ -295,6 +381,23 @@ function buildInstTabIHTML(instId) {
   }).join('');
 }
 
+/* Campo de decaimento por instância — incluído em cada bloco de parte dentro da instância */
+function buildDecInstFieldHTML(instId, parte) {
+  const decVal = parte.decaimentoInst?.[instId] != null ? parte.decaimentoInst[instId] : '';
+  return `
+    <div class="field" style="width:160px;">
+      <div class="label">
+        <span>Decaimento nesta inst.</span>
+        <span class="label-help" data-tip="Deixe em branco para usar o decaimento global definido no Passo 1 (${parte.decaimento}%).">global: ${parte.decaimento}%</span>
+      </div>
+      <div class="affix">
+        <input type="number" class="i-dec-inst" data-pid="${parte.id}" data-instid="${instId}"
+          min="0" max="100" step="any" value="${decVal}" placeholder="${parte.decaimento}" />
+        <span class="affix-post">%</span>
+      </div>
+    </div>`;
+}
+
 function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
   if (parte.relacao === 'colig') {
     return `
@@ -311,6 +414,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
         <div class="colig-membros-inst" id="inst-colig-${instId}-${parte.id}">
           ${parte.membros.map(m => buildInstMembroHTML(instId, parte, m, valorAcao, 'B')).join('')}
         </div>
+        ${buildDecInstFieldHTML(instId, parte)}
       </div>`;
   }
   // Parte autónoma / litisconsórcio
@@ -319,7 +423,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
   return `
     <div class="inst-parte-block" data-pid="${parte.id}">
       <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
-      <div class="grid grid-3">
+      <div class="grid grid-4">
         <div class="field">
           <div class="label"><span>Coluna (Tab. I)</span></div>
           <select class="i-coluna" data-pid="${parte.id}">
@@ -329,13 +433,14 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
           </select>
         </div>
         <div class="field">
-          <div class="label"><span>TJ efectivamente paga</span></div>
+          <div class="label"><span>TJ efetivamente paga</span></div>
           <div class="affix">
             <span class="affix-pre">€</span>
-            <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="0.01" placeholder="0,00" />
+            <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
           </div>
           <div class="field-hint tj-hint" data-pid="${parte.id}">TJ teórica (Col. A): ${tjStr}</div>
         </div>
+        ${buildDecInstFieldHTML(instId, parte)}
         <div class="field tj-alerta-field" style="display:none;" data-pid="${parte.id}">
           <div class="alerta-tj">⚠ Divergência face à TJ teórica</div>
         </div>
@@ -353,7 +458,7 @@ function buildInstMembroHTML(instId, parte, m, valorAcao, coluna) {
         <div class="label"><span>TJ paga</span></div>
         <div class="affix">
           <span class="affix-pre">€</span>
-          <input type="number" class="i-tj-m" data-pid="${parte.id}" data-mid="${m.id}" min="0" step="0.01" placeholder="0,00" />
+          <input type="number" class="i-tj-m" data-pid="${parte.id}" data-mid="${m.id}" min="0" step="any" placeholder="0,00" />
         </div>
         <div class="field-hint tj-hint-m" data-mid="${m.id}">TJ teórica: ${tjStr}</div>
       </div>
@@ -370,14 +475,15 @@ function buildInstTCHTML(instId) {
       <div class="inst-parte-block" data-pid="${parte.id}">
         <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
         <div class="hint" style="margin-bottom:.5rem;">TJ fixada pelo tribunal (DL 303/98). Consulte a tabela TC no painel de referência.</div>
-        <div class="grid grid-2">
+        <div class="grid grid-3">
           <div class="field">
-            <div class="label"><span>TJ efectivamente paga (€)</span></div>
+            <div class="label"><span>TJ efetivamente paga (€)</span></div>
             <div class="affix">
               <span class="affix-pre">€</span>
-              <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="0.01" placeholder="0,00" />
+              <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
             </div>
           </div>
+          ${buildDecInstFieldHTML(instId, parte)}
         </div>
       </div>`;
   }).join('');
@@ -407,15 +513,16 @@ function buildInstTab2HTML(instId, tipo) {
       return `
         <div class="inst-parte-block" data-pid="${parte.id}">
           <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
-          <div class="grid grid-2">
+          <div class="grid grid-3">
             <div class="field">
-              <div class="label"><span>TJ efectivamente paga (€)</span></div>
+              <div class="label"><span>TJ efetivamente paga (€)</span></div>
               <div class="affix">
                 <span class="affix-pre">€</span>
-                <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="0.01" placeholder="0,00" />
+                <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
               </div>
               <div class="field-hint tj-hint" data-pid="${parte.id}"></div>
             </div>
+            ${buildDecInstFieldHTML(instId, parte)}
           </div>
         </div>`;
     }).join('')}`;
@@ -425,11 +532,25 @@ function bindInstEvents(div, id) {
   const tipoSel = div.querySelector('.i-tipo');
   tipoSel.addEventListener('change', () => {
     const tipo = tipoSel.value;
+    const instObj = S.inst.find(i => i.id === id);
+    if (instObj) instObj.tipo = tipo;
     div.querySelector('.inst-modo-wrap').innerHTML = buildInstModoHTML(id, tipo);
     bindInstModoEvents(div, id, tipo);
+    updateDecInstWrap(); // actualizar labels nas partes
     onAnyInput();
   });
   bindInstModoEvents(div, id, tipoSel.value);
+
+  // Capturar dispensa do remanescente
+  const dispensaInput = div.querySelector('.i-dispensa-rem');
+  if (dispensaInput) {
+    dispensaInput.addEventListener('input', () => {
+      const inst = S.inst.find(i => i.id === id);
+      if (inst) inst.dispensaRem = dispensaInput.value === '' ? 0 : num(dispensaInput.value);
+      onAnyInput();
+    });
+  }
+
   div.addEventListener('input', onInstInput);
 }
 
@@ -491,6 +612,8 @@ function updateInstancias() {
       bindInstModoEvents(div, instId, tipo);
     }
   });
+  // Actualizar também os campos de decaimento por instância nas partes
+  updateDecInstWrap();
 }
 
 function updateInstHints() {
@@ -530,7 +653,7 @@ function onInstInput(e) {
       const col = colSel?.value || 'A';
       const tjTeo = calcTJTeorica(getValorAcao(), col).base;
       const tjPaga = num(el.value);
-      const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.01;
+      const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.02;
       const alertaEl = el.closest('.inst-parte-block')?.querySelector(`.tj-alerta-field[data-pid="${pid}"]`);
       if (alertaEl) alertaEl.style.display = diverge ? '' : 'none';
     }
@@ -548,7 +671,7 @@ function onInstInput(e) {
         const v = m.valorPedido > 0 ? m.valorPedido : getValorAcao();
         const tjTeo = calcTJTeorica(v, col).base;
         const tjPaga = num(el.value);
-        const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.01;
+        const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.02;
         const alertaEl = el.closest('.colig-membro-row')?.querySelector(`.tj-alerta-m[data-mid="${mid}"]`);
         if (alertaEl) alertaEl.style.display = diverge ? '' : 'none';
       }
@@ -610,6 +733,28 @@ function collectState() {
     const modo = tipoModo(tipo);
     const subtipo = el.querySelector('.i-tab2sub')?.value || '';
 
+    // Recolher decaimento por instância de cada parte dentro deste bloco
+    // Apenas actualiza — não apaga valores de instâncias não renderizadas
+    el.querySelectorAll('.i-dec-inst').forEach(inp => {
+      const pid = +inp.dataset.pid;
+      const instid = +inp.dataset.instid;
+      const parte = S.partes.find(p => p.id === pid);
+      if (!parte) return;
+      if (!parte.decaimentoInst) parte.decaimentoInst = {};
+      if (inp.value !== '') {
+        const v = num(inp.value);
+        // Só guardar override se for diferente do decaimento global
+        if (v !== parte.decaimento) {
+          parte.decaimentoInst[instid] = v;
+        } else {
+          delete parte.decaimentoInst[instid];
+        }
+      } else {
+        // Campo vazio = usa global → remover override se existia
+        delete parte.decaimentoInst[instid];
+      }
+    });
+
     const tjPartes = S.partes.map(parte => {
       let tjPaga = 0, coluna = 'A';
       if (modo === 'tabI') {
@@ -635,7 +780,12 @@ function collectState() {
       return { partId: parte.id, coluna, tjPaga, tjTeorica };
     });
 
-    return { id: i.id, tipo, subtipo, tjPartes };
+    const dispensaRem = num(el.querySelector('.i-dispensa-rem')?.value, 0);
+    // sincronizar tipo e dispensa no estado
+    const sInst = S.inst.find(x => x.id === i.id);
+    if (sInst) { sInst.tipo = tipo; sInst.dispensaRem = dispensaRem; }
+
+    return { id: i.id, tipo, subtipo, dispensaRem, tjPartes };
   }).filter(Boolean);
 
   const encargos = S.enc.map(e => ({
@@ -645,6 +795,8 @@ function collectState() {
 
   return {
     valorAcao,
+    numProcesso: ($('#numProcesso')?.value || '').trim(),
+    tribunal: ($('#tribunal')?.value || '').trim(),
     estimarRem: getEstimarRem(),
     cliente: getCliente(),
     partes: getRestantes(),
@@ -745,6 +897,7 @@ function updateSummary() {
 }
 
 function onAnyInput() {
+  saveState();
   onValorAcaoChange();
   toggleHon();
   updateSummary();
@@ -775,6 +928,8 @@ function renderResult() {
     <div class="result-section">
       <div class="result-section-head">Configuração</div>
       <div class="result-section-body">
+        ${st.numProcesso ? `<div class="rrow"><span class="d">Processo</span><span class="v">${st.numProcesso}</span></div>` : ''}
+        ${st.tribunal ? `<div class="rrow"><span class="d">Tribunal</span><span class="v">${st.tribunal}</span></div>` : ''}
         <div class="rrow"><span class="d">Valor da ação</span><span class="v">${fmtEuroLong(r.valorAcao)}</span></div>
         <div class="rrow"><span class="d">Cliente</span><span class="v">${r.cliente.nome}${decClienteInfo}</span></div>
         ${r.partes.map(p => `
@@ -793,23 +948,35 @@ function renderResult() {
     </div>`;
 
   // ── Detalhe por instância ──
-  if (r.insts.length) {
+  if (r.instDetalhe && r.instDetalhe.length) {
     html += `<div class="result-section"><div class="result-section-head">Detalhe por instância</div><div class="result-section-body">`;
-    r.insts.forEach((inst, idx) => {
+    r.instDetalhe.forEach((inst, idx) => {
       const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
       const sub = inst.subtipo ? (TABELA_II.find(x => x.key === inst.subtipo)?.label || '') : '';
-      html += `<div style="margin-bottom:.8rem;"><div class="rrow"><span class="d"><span class="rubric-badge">#${idx+1}</span>${lbl}${sub ? ' · ' + sub : ''}</span></div>`;
-      (inst.tjPartes || []).forEach(tp => {
+      const dispensaInfo = inst.dispensaRem > 0
+        ? ` <span class="tag-limitado">dispensa ${fmtPct(inst.dispensaRem)}% rem.</span>` : '';
+      html += `<div style="margin-bottom:.8rem;"><div class="rrow"><span class="d"><span class="rubric-badge">#${idx+1}</span>${lbl}${sub ? ' · ' + sub : ''}${dispensaInfo}</span></div>`;
+      (inst.tjPartesCorrigidas || inst.tjPartes || []).forEach(tp => {
         const parte = r.todasPartes.find(p => p.id === tp.partId);
         if (!parte) return;
         const isCliente = parte.id === r.cliente.id;
         const colLabel = tp.coluna && tp.coluna !== 'tc' && tp.coluna !== 'tab2'
           ? ` · Col. ${tp.coluna}` : '';
-        const diverge = tp.tjTeorica > 0 && Math.abs(tp.tjPaga - tp.tjTeorica) > 0.01;
+        const diverge = tp.tjTeorica > 0 && Math.abs(tp.tjPaga - tp.tjTeorica) > 0.02;
+        const decInfo = tp.decUsado != null && tp.decUsado !== (parte.decaimento || 0)
+          ? ` <span class="muted-small">dec. ${fmtPct(tp.decUsado)}</span>` : '';
+        const remInfo = tp.remEfectivo > 0
+          ? ` <span class="muted-small">+ rem. ${fmtEuroLong(tp.remEfectivo)}</span>` : '';
         html += `<div class="rrow">
-          <span class="d">&nbsp;&nbsp;${parte.nome}${isCliente ? ' <span class="tag-cliente">cliente</span>' : ''}${colLabel} · TJ paga</span>
+          <span class="d">&nbsp;&nbsp;${parte.nome}${isCliente ? ' <span class="tag-cliente">cliente</span>' : ''}${colLabel} · TJ paga${remInfo}${decInfo}</span>
           <span class="v">${fmtEuroLong(tp.tjPaga)}${diverge ? ' <span class="alerta-inline">⚠ teórica: ' + fmtEuroLong(tp.tjTeorica) + '</span>' : ''}</span>
         </div>`;
+        if (tp.remEfectivo > 0 || (tp.decUsado != null && tp.decUsado > 0)) {
+          html += `<div class="rrow" style="padding-left:2rem; color:var(--muted); font-size:.78rem;">
+            <span class="d">TJ corrigida (TJ + rem. efetivo) × factor vitória</span>
+            <span class="v">${fmtEuroLong(tp.tjCorrigida)}</span>
+          </div>`;
+        }
       });
       html += `</div>`;
     });
@@ -821,9 +988,13 @@ function renderResult() {
   const art32aplicavel = r.nVencedores > 1;
   // Linhas do rateio por parte (só quando art. 32.º/2 se aplica)
   const linhasRateio = art32aplicavel ? r.partesUnicas
-    .filter(p => (p.decaimento || 0) < 100)
+    .filter(p => {
+      const fvObj = r.factoresVitoria?.find(x => x.id === p.id);
+      return fvObj ? fvObj.fv > 0 : (p.decaimento || 0) < 100;
+    })
     .map(p => {
-      const fv = 1 - (p.decaimento || 0) / 100;
+      const fvObj = r.factoresVitoria?.find(x => x.id === p.id);
+      const fv = fvObj ? fvObj.fv : (1 - (p.decaimento || 0) / 100);
       const limP = r.somaFactoresVitoria > 0 ? r.limGlobal * fv / r.somaFactoresVitoria : 0;
       const isCliente = p.id === r.cliente.id;
       const etiqueta = isCliente ? `${p.nome} <span class="tag-cliente">cliente</span>` : p.nome;
@@ -835,13 +1006,40 @@ function renderResult() {
       </div>`;
     }).join('') : '';
 
+  const temCorrecoes = r.instDetalhe?.some(i => i.dispensaRem > 0 || i.tjPartesCorrigidas?.some(tp => tp.decUsado > 0));
+
+  // Linhas de imputação do remanescente por parte vencida
+  const linhasImputacaoRem = (r.estimarRem && r.imputacaoRem?.length > 0 && r.poolRemImputavel > 0)
+    ? r.imputacaoRem.map(imp => {
+        const pct = fmtPct(imp.proporcao * 100);
+        const somaDec = fmtPct(r.imputacaoRem.reduce((s, x) => s + x.decaimento, 0));
+        return `<div class="rrow" style="padding-left:1.25rem;">
+          <span class="d">${imp.nome} · ${fmtPct(imp.decaimento)}% / ${somaDec} <span class="muted-small">(proporção do decaimento)</span></span>
+          <span class="v">${fmtEuroLong(imp.montante)}</span>
+        </div>`;
+      }).join('')
+    : '';
+
   html += `
     <div class="result-section">
       <div class="result-section-head">Somatório de TJ — base para Rubrica C</div>
       <div class="result-section-body">
-        <div class="rrow"><span class="d">TJ base efectivamente pagas por todas as partes</span><span class="v">${fmtEuroLong(r.somaTJBase)}</span></div>
-        ${r.estimarRem ? `<div class="rrow"><span class="d">Remanescente estimado (por instância, pela coluna seleccionada)</span><span class="v">${fmtEuroLong(r.somaRemEstimado)}</span></div>` : ''}
-        <div class="rrow rrow-total"><span class="d">Somatório total</span><span class="v">${fmtEuroLong(r.somaTJTotal)}</span></div>
+        <div class="rrow"><span class="d">TJ base efetivamente pagas por todas as partes</span><span class="v">${fmtEuroLong(r.somaTJBase)}</span></div>
+        ${r.estimarRem && r.somaRemTotal > 0 ? `
+        <div class="rrow"><span class="d">Remanescente efetivo de todas as partes (deduzida dispensa por instância)</span><span class="v">${fmtEuroLong(r.somaRemTotal)}</span></div>
+        ${r.poolRemImputavel > 0 ? `
+        <div class="rrow" style="margin-top:.35rem;">
+          <span class="d" style="color:var(--muted); font-size:.78rem;">Pool de remanescente imputável às partes vencidas — Σ (rem. de cada parte × factor de vitória)</span>
+          <span class="v" style="color:var(--muted);">${fmtEuroLong(r.poolRemImputavel)}</span>
+        </div>
+        ${linhasImputacaoRem}
+        ` : ''}
+        ` : ''}
+        ${temCorrecoes ? `
+        <div class="rrow rrow-total"><span class="d">Somatório total (TJ + rem. efetivo de todas as partes)</span><span class="v">${fmtEuroLong(r.somaTJCorrigida)}</span></div>
+        ` : `
+        <div class="rrow rrow-total"><span class="d">Somatório total</span><span class="v">${fmtEuroLong(r.somaTJCorrigida)}</span></div>
+        `}
         <div class="rrow"><span class="d">50% = limite global Rubrica C</span><span class="v">${fmtEuroLong(r.limGlobal)}</span></div>
         ${art32aplicavel ? `
         <div class="rrow" style="margin-top:.5rem;">
@@ -1017,6 +1215,8 @@ function resetAll() {
   $('#instList').innerHTML = '';
   $('#encList').innerHTML = '';
   $('#valorAcao').value = '';
+  if ($('#numProcesso')) $('#numProcesso').value = '';
+  if ($('#tribunal')) $('#tribunal').value = '';
   $('#limHon').checked = false;
   $('#honReais').value = '';
   if ($('#estimarRem')) $('#estimarRem').checked = false;
@@ -1026,6 +1226,7 @@ function resetAll() {
   addEnc();
   goStep(1);
   onAnyInput();
+  localStorage.removeItem('custas_state');
 }
 
 function toggleSummaryMobile() {
@@ -1033,14 +1234,171 @@ function toggleSummaryMobile() {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   Persistência — localStorage
+══════════════════════════════════════════════════════════════ */
+
+const LS_KEY = 'custas_state_v2';
+
+function saveState() {
+  try {
+    const snap = {
+      valorAcao: $('#valorAcao')?.value || '',
+      numProcesso: $('#numProcesso')?.value || '',
+      tribunal: $('#tribunal')?.value || '',
+      estimarRem: $('#estimarRem')?.checked || false,
+      limHon: $('#limHon')?.checked || false,
+      honReais: $('#honReais')?.value || '',
+      partes: S.partes.map(p => ({
+        id: p.id, nome: p.nome, relacao: p.relacao,
+        decaimento: p.decaimento, decaimentoInst: p.decaimentoInst || {},
+        membros: p.membros.map(m => ({
+          id: m.id, nome: m.nome, valorPedido: m.valorPedido, decaimento: m.decaimento
+        })),
+      })),
+      clienteId: S.clienteId,
+      inst: S.inst.map(i => {
+        const el = $('#inst-' + i.id);
+        const tjPartes = {};
+        if (el) {
+          el.querySelectorAll('.i-tj, .i-tj-m').forEach(inp => {
+            // Guardar a string exacta do campo — arredondamento só no restore
+            tjPartes[inp.dataset.pid + '_' + (inp.dataset.mid || '')] = inp.value;
+          });
+          el.querySelectorAll('.i-coluna, .i-coluna-grupo').forEach(sel => {
+            tjPartes['col_' + sel.dataset.pid] = sel.value;
+          });
+        }
+        return {
+          id: i.id, tipo: i.tipo || '1inst', dispensaRem: i.dispensaRem || 0, tjPartes
+        };
+      }),
+      enc: S.enc.map(e => ({
+        id: e.id,
+        desc: $('#enc-' + e.id + ' .enc-desc')?.value || '',
+        val: $('#enc-' + e.id + ' .enc-val')?.value || '',
+      })),
+      parteIdx: S.parteIdx, membroIdx: S.membroIdx,
+      instIdx: S.instIdx, encIdx: S.encIdx,
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(snap));
+  } catch(e) { /* silenciar erros de quota */ }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+
+    // Restaurar contadores
+    S.parteIdx = snap.parteIdx || 0;
+    S.membroIdx = snap.membroIdx || 0;
+    S.instIdx = snap.instIdx || 0;
+    S.encIdx = snap.encIdx || 0;
+    S.clienteId = snap.clienteId;
+
+    // Restaurar partes
+    S.partes = snap.partes || [];
+    $('#clienteWrap').innerHTML = '';
+    $('#partesWrap').innerHTML = '';
+    S.partes.forEach(p => {
+      const isCliente = p.id === S.clienteId;
+      renderParteRow(p, isCliente);
+    });
+
+    // Restaurar campos do processo
+    if (snap.valorAcao) $('#valorAcao').value = snap.valorAcao;
+    if (snap.numProcesso) $('#numProcesso').value = snap.numProcesso;
+    if (snap.tribunal) $('#tribunal').value = snap.tribunal;
+    if (snap.estimarRem) $('#estimarRem').checked = snap.estimarRem;
+    if (snap.limHon) { $('#limHon').checked = snap.limHon; toggleHon(); }
+    if (snap.honReais) $('#honReais').value = snap.honReais;
+
+    // Restaurar instâncias
+    $('#instList').innerHTML = '';
+    S.inst = [];
+    (snap.inst || []).forEach(si => {
+      S.inst.push({ id: si.id, tipo: si.tipo, dispensaRem: si.dispensaRem || 0 });
+      S.instIdx = Math.max(S.instIdx, si.id);
+      // Renderizar a instância (inline, sem chamar addInst que incrementaria S.instIdx)
+      const instDiv = document.createElement('div');
+      instDiv.className = 'instance';
+      instDiv.id = 'inst-' + si.id;
+      instDiv.innerHTML = buildInstHTML(si.id);
+      $('#instList').appendChild(instDiv);
+      bindInstEvents(instDiv, si.id);
+      // Restaurar valores de TJ
+      const el = $('#inst-' + si.id);
+      if (el && si.tjPartes) {
+        Object.entries(si.tjPartes).forEach(([k, v]) => {
+          if (k.startsWith('col_')) {
+            const pid = k.replace('col_', '');
+            const sel = el.querySelector(`.i-coluna[data-pid="${pid}"], .i-coluna-grupo[data-pid="${pid}"]`);
+            if (sel) sel.value = v;
+          } else {
+            const [pid, mid] = k.split('_');
+            const inp = mid
+              ? el.querySelector(`.i-tj-m[data-pid="${pid}"][data-mid="${mid}"]`)
+              : el.querySelector(`.i-tj[data-pid="${pid}"]`);
+            if (inp) {
+              // Restaurar valor exacto; se tiver mais de 2 casas decimais (lixo de fp), arredondar
+              const n = parseFloat(v);
+              if (Number.isFinite(n)) {
+                const rounded = Math.round(n * 100) / 100;
+                // Só corrigir se a diferença for inferior a 0.01 (lixo fp, não valor intencional)
+                inp.value = Math.abs(n - rounded) < 0.01 ? String(rounded) : v;
+              } else {
+                inp.value = v;
+              }
+            }
+          }
+        });
+      }
+    });
+    updateInstHints();
+
+    // Restaurar encargos
+    $('#encList').innerHTML = '';
+    S.enc = [];
+    (snap.enc || []).forEach(se => {
+      S.enc.push({ id: se.id });
+      const encDiv = document.createElement('div');
+      encDiv.className = 'enc-row';
+      encDiv.id = 'enc-' + se.id;
+      encDiv.innerHTML = `
+        <div class="field">
+          <div class="label"><span>Descrição</span></div>
+          <input type="text" class="enc-desc" placeholder="ex: Honorários de perito" value="${se.desc || ''}" />
+        </div>
+        <div class="field">
+          <div class="label"><span>Valor</span></div>
+          <div class="affix"><span class="affix-pre">€</span><input type="number" class="enc-val" min="0" step="0.01" placeholder="0,00" value="${se.val || ''}" /></div>
+        </div>
+        <button class="btn-x" onclick="rmEnc(${se.id})"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+      `;
+      $('#encList').appendChild(encDiv);
+      encDiv.addEventListener('input', onAnyInput);
+    });
+
+    return true;
+  } catch(e) {
+    console.warn('Erro ao restaurar estado:', e);
+    return false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
    Init
 ══════════════════════════════════════════════════════════════ */
 
 window.addEventListener('DOMContentLoaded', () => {
-  addParte(true);
-  addParte(false);
-  addInst();
-  addEnc();
+  const restored = loadState();
+  if (!restored) {
+    addParte(true);
+    addParte(false);
+    addInst();
+    addEnc();
+  }
 
   $('#valorAcao').addEventListener('input', onAnyInput);
   $('#limHon').addEventListener('change', onAnyInput);

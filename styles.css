@@ -136,7 +136,9 @@ body {
 .grid { display: grid; gap: 1rem; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
-@media (max-width: 640px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 640px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
 .field { display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
 .field.full { grid-column: 1 / -1; }
 
@@ -710,6 +712,37 @@ table.ref tr:hover td { background: var(--surface-2); }
   border-radius: var(--radius-sm);
   padding: .6rem .9rem; font-size: .82rem;
   margin-top: .75rem;
+}
+
+/* Decaimento por instância */
+.switch-row-sm {
+  padding: .45rem .75rem;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  margin-top: .25rem;
+}
+.switch-row-sm:hover { border-color: var(--border); background: transparent; }
+.sw-sm { width: 30px; height: 18px; }
+.sw-sm .sl::before { width: 12px; height: 12px; left: 2px; }
+.sw-sm input:checked + .sl::before { transform: translate(12px, -50%); }
+
+.dec-por-inst-wrap {
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .6rem .75rem;
+  margin-bottom: .5rem;
+}
+.dec-inst-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75rem; padding: .3rem 0;
+}
+.dec-inst-row + .dec-inst-row { border-top: 1px solid var(--border); }
+.dec-inst-label {
+  font-size: .78rem; color: var(--muted); flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Print */
