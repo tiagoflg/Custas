@@ -1001,10 +1001,30 @@ function updateSummary() {
   }
 }
 
+function updateAvisoDecaimento() {
+  const aviso = $('#avisoDecaimento');
+  if (!aviso) return;
+  if (S.partes.length === 0) { aviso.style.display = 'none'; return; }
+
+  const soma = S.partes.reduce((s, p) => s + (p.decaimento || 0), 0);
+  const diff = Math.round((soma - 100) * 100) / 100; // evitar floating-point noise
+
+  if (diff === 0) {
+    aviso.style.display = 'none';
+  } else {
+    const msg = diff > 0
+      ? `⚠ A soma dos decaimentos é ${fmtPct(soma)} — superior a 100% em ${fmtPct(diff)}.`
+      : `⚠ A soma dos decaimentos é ${fmtPct(soma)} — inferior a 100% em ${fmtPct(Math.abs(diff))}.`;
+    aviso.textContent = msg;
+    aviso.style.display = 'block';
+  }
+}
+
 function onAnyInput() {
   saveState();
   onValorAcaoChange();
   toggleHon();
+  updateAvisoDecaimento();
   updateSummary();
 }
 

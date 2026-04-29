@@ -781,9 +781,15 @@ async function exportarNotas() {
       const numProc      = safe(st.numProcesso) || safe(nomeParteDisplay(r.cliente)) || 'processo';
       const nomeVenc     = safe(nomeParteDisplay(r.cliente)) || 'vencedor';
       const parteVencidaFn = r.todasPartes?.find(p => p.id === nota.parteId);
-      const nomeVencidoFn  = safe((parteVencidaFn ? nomeParteDisplay(parteVencidaFn) : '') || nota.nome || '');
-      const sufixo = r.notasIndividuais.length > 1 && nomeVencidoFn
-        ? '_c_' + nomeVencidoFn
+      // Para coligação: usar o nome do membro individual (nota.nome), não o nome do grupo
+      const nomeVencidoFn = safe(
+        parteVencidaFn?.relacao === 'colig'
+          ? (nota.nome || nomeParteDisplay(parteVencidaFn))
+          : (parteVencidaFn ? nomeParteDisplay(parteVencidaFn) : (nota.nome || ''))
+      );
+      // Sufixo sempre presente quando há múltiplas notas (coligação, litis, etc.)
+      const sufixo = r.notasIndividuais.length > 1
+        ? '_c_' + (nomeVencidoFn || ('nota' + (i + 1)))
         : '';
       a.download = numProc + '_NDJCP_' + nomeVenc + sufixo + '.docx';
       document.body.appendChild(a);

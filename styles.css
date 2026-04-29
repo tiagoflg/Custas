@@ -629,6 +629,33 @@ table.ref tr:hover td { background: var(--surface-2); }
 }
 .btn-add-sub:hover { border-color: var(--accent); color: var(--accent); }
 .btn-add-sub svg { width: 14px; height: 14px; }
+
+/* ── Litisconsórcio: lista de nomes ── */
+.litis-nomes-list {
+  display: flex; flex-direction: column; gap: .35rem; margin-bottom: .35rem;
+}
+.litis-nome-row {
+  display: flex; align-items: center; gap: .4rem;
+}
+.litis-nome-row input { flex: 1; }
+.btn-x-sm {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--muted); cursor: pointer;
+  width: 26px; height: 26px; display: grid; place-items: center; flex-shrink: 0;
+  transition: all .15s;
+}
+.btn-x-sm:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); }
+.btn-x-sm svg { width: 12px; height: 12px; }
+.btn-add-litis {
+  display: inline-flex; align-items: center; gap: .3rem;
+  background: none; border: 1px dashed var(--border-hi);
+  border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer;
+  font-size: .75rem; padding: .2rem .55rem; margin-top: .15rem;
+  transition: border-color .15s, color .15s;
+}
+.btn-add-litis:hover { border-color: var(--accent); color: var(--accent); }
+.btn-add-litis svg { width: 12px; height: 12px; }
+
 .field-hint {
   font-size: .72rem; color: var(--muted); margin-top: .25rem;
 }
@@ -687,6 +714,15 @@ table.ref tr:hover td { background: var(--surface-2); }
 .colig-membro-nome {
   font-size: .78rem; font-weight: 600; color: var(--text-2);
   min-width: 100px;
+}
+
+/* ── Aviso de decaimento ── */
+.alerta-decaimento {
+  font-size: .82rem; color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: var(--radius-sm);
+  padding: .55rem .85rem;
+  margin-top: .75rem; margin-bottom: .5rem;
 }
 
 /* ── Alertas TJ ── */
