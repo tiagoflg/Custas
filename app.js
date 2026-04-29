@@ -46,7 +46,9 @@ function addParte(isCliente = false) {
   updateInstancias();
 }
 
-/* Gera a lista de nomes para uma parte em litisconsórcio */
+/* Gera a lista de nomes para uma parte em litisconsórcio.
+   Tudo num único wrapper (#litis-wrap-ID) para que rerenderLitisNomes
+   possa substituir lista + botão de uma vez com outerHTML. */
 function renderLitisNomesHTML(parte, isCliente) {
   const rows = parte.membros.map((m, idx) => {
     const podeRemover = parte.membros.length > 1;
@@ -54,18 +56,30 @@ function renderLitisNomesHTML(parte, isCliente) {
       ? (idx === 0 ? 'ex: A, S.A.' : 'ex: B, Lda.')
       : (idx === 0 ? 'ex: Réu A' : 'ex: Réu B');
     return `
-      <div class="litis-nome-row" id="litis-m-${m.id}">
-        <input type="text" class="l-nome${idx === 0 ? ' p-nome' : ''}" data-pid="${parte.id}" data-mid="${m.id}"
+      <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.25rem;">
+        <input type="text" class="l-nome${idx === 0 ? ' p-nome' : ''}" style="flex:1;"
+          data-pid="${parte.id}" data-mid="${m.id}"
           value="${m.nome}" placeholder="${placeholder}" />
-        ${podeRemover ? `<button class="btn-x btn-x-sm" onclick="rmLitisMembro(${parte.id}, ${m.id})"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5L5 15"/></svg></button>` : ''}
+        ${podeRemover
+          ? `<button class="btn-x" style="width:28px;height:28px;flex-shrink:0;"
+               onclick="rmLitisMembro(${parte.id}, ${m.id})">
+               <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                 <path d="M5 5l10 10M15 5L5 15"/>
+               </svg>
+             </button>`
+          : ''}
       </div>`;
   }).join('');
   return `
-    <div class="litis-nomes-list" id="litis-nomes-${parte.id}">${rows}</div>
-    <button class="btn-add-sub" style="margin-top:.35rem;" onclick="addLitisMembro(${parte.id})">
-      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 4v12M4 10h12"/></svg>
-      Membro
-    </button>`;
+    <div id="litis-wrap-${parte.id}">
+      ${rows}
+      <button class="btn-add-sub" style="margin-top:.25rem;" onclick="addLitisMembro(${parte.id})">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M10 4v12M4 10h12"/>
+        </svg>
+        Membro
+      </button>
+    </div>`;
 }
 
 function addLitisMembro(parteId) {
@@ -89,12 +103,9 @@ function rmLitisMembro(parteId, membroId) {
 
 function rerenderLitisNomes(parte) {
   const isCliente = parte.id === S.clienteId;
-  const wrap = $('#litis-nomes-' + parte.id);
+  // O wrapper único (#litis-wrap-ID) contém lista + botão — substituir tudo de uma vez
+  const wrap = $('#litis-wrap-' + parte.id);
   if (!wrap) return;
-  const parent = wrap.parentElement;
-  // remover botão antigo e lista antiga
-  const oldBtn = parent.querySelector('.btn-add-litis');
-  if (oldBtn) oldBtn.remove();
   wrap.outerHTML = renderLitisNomesHTML(parte, isCliente);
   // rebind: os eventos de input ficam no listener geral do card
   const card = $('#parte-' + parte.id);
