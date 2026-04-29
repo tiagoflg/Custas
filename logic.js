@@ -398,7 +398,7 @@ function computeResult(state) {
       somaTJBase += tjBase;
 
       let remEfectivo = 0;
-      if (estimarRem && TIPOS_COM_REM.has(inst.tipo)) {
+      if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && tjBase > 0) {
         const col = normColuna(tp.coluna || 'A');
         const remTotal = calcRemParteInst(parte, valorAcao, col);
         remEfectivo = remTotal * (1 - dispensaFrac);

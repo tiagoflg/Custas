@@ -774,13 +774,18 @@ async function exportarNotas() {
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      const prefixo = st.numProcesso
-        ? st.numProcesso.replace(/[\/\\:*?"<>|]/g, '-')
-        : (nomeParteDisplay(r.cliente) || 'cliente').replace(/[\/\\:*?"<>|]/g, '-');
-      // Para a parte vencida: usar nome composto se for litisconsórcio
+      // Formato: [N.º processo]_NDJCP_[Nome da parte vencedora].docx
+      // Se houver múltiplas notas (vários vencidos), acrescentar o nome do vencido
+      // para evitar sobreposição de ficheiros.
+      const safe = s => (s || '').replace(/[\/\\:*?"<>|]/g, '-').trim();
+      const numProc      = safe(st.numProcesso) || safe(nomeParteDisplay(r.cliente)) || 'processo';
+      const nomeVenc     = safe(nomeParteDisplay(r.cliente)) || 'vencedor';
       const parteVencidaFn = r.todasPartes?.find(p => p.id === nota.parteId);
-      const nomeVencidoFn  = (parteVencidaFn ? nomeParteDisplay(parteVencidaFn) : '') || nota.nome || 'parte';
-      a.download = prefixo + '_nota-custas_' + nomeVencidoFn.replace(/[\/\\:*?"<>|]/g, '-') + '.docx';
+      const nomeVencidoFn  = safe((parteVencidaFn ? nomeParteDisplay(parteVencidaFn) : '') || nota.nome || '');
+      const sufixo = r.notasIndividuais.length > 1 && nomeVencidoFn
+        ? '_c_' + nomeVencidoFn
+        : '';
+      a.download = numProc + '_NDJCP_' + nomeVenc + sufixo + '.docx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
