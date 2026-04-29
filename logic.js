@@ -219,6 +219,9 @@ const TIPOS_TAB2 = new Set(['tab2']);
 /* Tipos sem coluna A/B/C (valor livre ou intervalo UC) */
 const TIPOS_LIVRE = new Set(['tc', 'tab2']);
 
+/* Tipos com remanescente (Tabela I — art. 6.º, n.º 7 RCP) */
+const TIPOS_COM_REM = new Set(['1inst', 'apelacao', 'revista']);
+
 /* ══════════════════════════════════════════════════════════════
    Funções de cálculo de TJ
 ══════════════════════════════════════════════════════════════ */
@@ -395,7 +398,7 @@ function computeResult(state) {
       somaTJBase += tjBase;
 
       let remEfectivo = 0;
-      if (estimarRem && !TIPOS_LIVRE.has(inst.tipo)) {
+      if (estimarRem && TIPOS_COM_REM.has(inst.tipo)) {
         const col = normColuna(tp.coluna || 'A');
         const remTotal = calcRemParteInst(parte, valorAcao, col);
         remEfectivo = remTotal * (1 - dispensaFrac);
