@@ -34,7 +34,7 @@ function addParte(isCliente = false) {
   const parte = {
     id,
     nome: isCliente ? 'O meu cliente' : 'Parte ' + (nRestantes + 1),
-    relacao: 'litis',
+    relacao: 'autonoma',
     decaimento: isCliente ? 0 : 100,
     decaimentoInst: {},       // decaimento específico por instância (instId → %)
     decPorInst: false,        // toggle: usa decaimento global ou por instância
@@ -68,8 +68,7 @@ function renderParteRow(parte, isCliente) {
       <div class="field" style="width:200px;">
         <div class="label"><span>Relação material</span></div>
         <select class="p-relacao" data-pid="${parte.id}">
-          <option value="autonoma"${parte.relacao === 'autonoma' ? ' selected' : ''}>Parte autónoma</option>
-          <option value="litis"${parte.relacao === 'litis' ? ' selected' : ''}>Litisconsórcio</option>
+          <option value="autonoma"${parte.relacao !== 'colig' ? ' selected' : ''}>Parte autónoma</option>
           <option value="colig"${parte.relacao === 'colig'  ? ' selected' : ''}>Coligação</option>
         </select>
       </div>
@@ -332,6 +331,10 @@ function buildInstHTML(id) {
   const podeRemover = nInst > 1;
   const instData = S.inst.find(i => i.id === id) || {};
   const dispensaVal = instData.dispensaRem != null ? instData.dispensaRem : '';
+  const tipoAtual = instData.tipo || '1inst';
+  const tipoOptsAtual = TIPOS_PRINCIPAIS.map(t =>
+    `<option value="${t.v}"${tipoAtual === t.v ? ' selected' : ''}>${t.l}</option>`
+  ).join('');
   return `
     <div class="instance-head">
       <div class="instance-title">
@@ -343,7 +346,7 @@ function buildInstHTML(id) {
     <div class="grid grid-2" style="margin-bottom:.75rem;">
       <div class="field">
         <div class="label"><span>Tipo</span></div>
-        <select class="i-tipo">${TIPOS_OPTS}</select>
+        <select class="i-tipo">${tipoOptsAtual}</select>
       </div>
       <div class="field">
         <div class="label">
@@ -359,7 +362,7 @@ function buildInstHTML(id) {
       </div>
     </div>
     <div class="inst-modo-wrap" id="inst-modo-${id}">
-      ${buildInstModoHTML(id, '1inst')}
+      ${buildInstModoHTML(id, tipoAtual)}
     </div>
   `;
 }
@@ -368,16 +371,16 @@ function buildInstModoHTML(instId, tipo) {
   const modo = tipoModo(tipo);
   if (modo === 'tc') return buildInstTCHTML(instId);
   if (modo === 'tab2') return buildInstTab2HTML(instId, tipo);
-  return buildInstTabIHTML(instId);  // Tab. I
+  return buildInstTabIHTML(instId, tipo);  // Tab. I
 }
 
 /* ── Tab. I: coluna por parte + TJ paga ── */
-function buildInstTabIHTML(instId) {
+function buildInstTabIHTML(instId, tipo) {
   const valorAcao = getValorAcao();
   if (S.partes.length === 0) return '';
   return S.partes.map(parte => {
     const isCliente = parte.id === S.clienteId;
-    return buildInstParteTabIHTML(instId, parte, valorAcao, isCliente);
+    return buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, tipo);
   }).join('');
 }
 
@@ -398,7 +401,11 @@ function buildDecInstFieldHTML(instId, parte) {
     </div>`;
 }
 
-function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
+/* tipos que usam Col. B por defeito */
+const TIPOS_COL_B = new Set(['apelacao', 'revista']);
+
+function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, instTipo) {
+  const defaultColB = TIPOS_COL_B.has(instTipo);
   if (parte.relacao === 'colig') {
     return `
       <div class="inst-parte-block" data-pid="${parte.id}">
@@ -406,7 +413,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
         <div class="inst-parte-coluna-sel">
           <div class="label"><span>Coluna (Tab. I)</span></div>
           <select class="i-coluna-grupo" data-pid="${parte.id}">
-            <option value="A">Col. A — Regra Geral / Litisconsórcio</option>
+            <option value="A">Col. A — Regra Geral</option>
             <option value="B" selected>Col. B — Coligação / Recursos</option>
             <option value="C">Col. C — Grandes Litigantes</option>
           </select>
@@ -417,8 +424,9 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
         ${buildDecInstFieldHTML(instId, parte)}
       </div>`;
   }
-  // Parte autónoma / litisconsórcio
-  const tjTeo = calcTJTeorica(valorAcao, 'A');
+  // Parte autónoma
+  const colDef = defaultColB ? 'B' : 'A';
+  const tjTeo = calcTJTeorica(valorAcao, colDef);
   const tjStr = tjTeo.base > 0 ? fmtEuroLong(tjTeo.base) : '—';
   return `
     <div class="inst-parte-block" data-pid="${parte.id}">
@@ -427,8 +435,8 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
         <div class="field">
           <div class="label"><span>Coluna (Tab. I)</span></div>
           <select class="i-coluna" data-pid="${parte.id}">
-            <option value="A" selected>Col. A — Regra Geral / Litisconsórcio</option>
-            <option value="B">Col. B — Coligação / Recursos</option>
+            <option value="A"${!defaultColB ? ' selected' : ''}>Col. A — Regra Geral</option>
+            <option value="B"${defaultColB ? ' selected' : ''}>Col. B — Coligação / Recursos</option>
             <option value="C">Col. C — Grandes Litigantes</option>
           </select>
         </div>
@@ -438,7 +446,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente) {
             <span class="affix-pre">€</span>
             <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
           </div>
-          <div class="field-hint tj-hint" data-pid="${parte.id}">TJ teórica (Col. A): ${tjStr}</div>
+          <div class="field-hint tj-hint" data-pid="${parte.id}">TJ teórica (Col. ${colDef}): ${tjStr}</div>
         </div>
         ${buildDecInstFieldHTML(instId, parte)}
         <div class="field tj-alerta-field" style="display:none;" data-pid="${parte.id}">
@@ -935,7 +943,7 @@ function renderResult() {
         ${r.partes.map(p => `
           <div class="rrow">
             <span class="d">${p.nome}</span>
-            <span class="v">${p.relacao === 'colig' ? 'Coligação' : p.relacao === 'litis' ? 'Litisconsórcio' : 'Autónoma'} · Decaimento: ${fmtPct(p.decaimento)}</span>
+            <span class="v">${p.relacao === 'colig' ? 'Coligação' : 'Autónoma'} · Decaimento: ${fmtPct(p.decaimento)}</span>
           </div>
           ${p.relacao === 'colig' && p.membros.length > 1 ? p.membros.map(m => `
             <div class="rrow" style="padding-left:1.5rem;">
