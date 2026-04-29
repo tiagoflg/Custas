@@ -954,7 +954,7 @@ function renderResult() {
       const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
       const sub = inst.subtipo ? (TABELA_II.find(x => x.key === inst.subtipo)?.label || '') : '';
       const dispensaInfo = inst.dispensaRem > 0
-        ? ` <span class="tag-limitado">dispensa ${fmtPct(inst.dispensaRem)}% rem.</span>` : '';
+        ? ` <span class="tag-limitado">dispensa ${fmtPct(inst.dispensaRem)} rem.</span>` : '';
       html += `<div style="margin-bottom:.8rem;"><div class="rrow"><span class="d"><span class="rubric-badge">#${idx+1}</span>${lbl}${sub ? ' · ' + sub : ''}${dispensaInfo}</span></div>`;
       (inst.tjPartesCorrigidas || inst.tjPartes || []).forEach(tp => {
         const parte = r.todasPartes.find(p => p.id === tp.partId);
