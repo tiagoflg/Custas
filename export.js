@@ -358,11 +358,33 @@ function mkTable(rows) {
 /* ════════════════════════════════════════════════════════════
    GERAÇÃO DO document.xml
 ════════════════════════════════════════════════════════════ */
-function gerarDocumentXml(r, st, nota) {
-  const cliente      = r.cliente;
-  const nomeVencido  = nota.nome || nota.grupo; // nome individual (membro), não o grupo
 
-  const nomeVencedor = cliente.nome || 'Parte vencedora';
+/**
+ * Devolve o nome de exibição de uma parte.
+ * Para litisconsórcio com múltiplos membros: "A, B e C".
+ * Para os restantes casos: parte.nome.
+ */
+function nomeParteDisplay(parte) {
+  if (!parte) return '';
+  if (parte.relacao === 'litis' && parte.membros && parte.membros.length > 1) {
+    const nomes = parte.membros.map(m => m.nome || '').filter(Boolean);
+    if (nomes.length === 0) return parte.nome || '';
+    if (nomes.length === 1) return nomes[0];
+    const ultimo = nomes[nomes.length - 1];
+    return nomes.slice(0, -1).join(', ') + ' e ' + ultimo;
+  }
+  return parte.nome || '';
+}
+
+function gerarDocumentXml(r, st, nota) {
+  const cliente = r.cliente;
+
+  // Parte vencedora: cliente (pode estar em litisconsórcio)
+  const nomeVencedor = nomeParteDisplay(cliente) || 'Parte vencedora';
+
+  // Parte vencida: identificar a parte pelo parteId da nota e expandir litis se necessário
+  const parteVencida = r.todasPartes?.find(p => p.id === nota.parteId);
+  const nomeVencido  = (parteVencida ? nomeParteDisplay(parteVencida) : '') || nota.nome || nota.grupo || 'Parte vencida';
   const numProcesso  = st.numProcesso || '[N.º do processo]';
   const tribunal     = st.tribunal    || '[Tribunal]';
   // mandatário preenchido directamente na nota (campo com highlight)
@@ -529,7 +551,7 @@ function gerarDocumentXml(r, st, nota) {
   const textoFnA = 'Correspondente a ' + fmtFracao(nota.pesoRubrA)
     + ' da taxa de justiça efetivamente liquidada pela parte vencedora'
     + ' – EUR ' + tjCliTotal.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' –,'
-    + ' calculada proporcionalmente ao decaimento individual de ' + nota.nome
+    + ' calculada proporcionalmente ao decaimento individual de ' + nomeVencido
     + ' (' + pctDecNota + ') face à soma dos decaimentos de todos os vencidos (' + somaDecLabel + '),'
     + ' para que, desta forma, a parte vencedora não obtenha qualquer enriquecimento face ao montante efetivamente pago.'
     + (r.encargos?.length > 0 ? ' O mesmo critério foi aplicado aos encargos (Rubrica B).' : '');
@@ -754,8 +776,11 @@ async function exportarNotas() {
       a.href     = url;
       const prefixo = st.numProcesso
         ? st.numProcesso.replace(/[\/\\:*?"<>|]/g, '-')
-        : (r.cliente.nome || 'cliente').replace(/[\/\\:*?"<>|]/g, '-');
-      a.download = prefixo + '_nota-custas_' + (nota.nome || 'parte').replace(/[\/\\:*?"<>|]/g, '-') + '.docx';
+        : (nomeParteDisplay(r.cliente) || 'cliente').replace(/[\/\\:*?"<>|]/g, '-');
+      // Para a parte vencida: usar nome composto se for litisconsórcio
+      const parteVencidaFn = r.todasPartes?.find(p => p.id === nota.parteId);
+      const nomeVencidoFn  = (parteVencidaFn ? nomeParteDisplay(parteVencidaFn) : '') || nota.nome || 'parte';
+      a.download = prefixo + '_nota-custas_' + nomeVencidoFn.replace(/[\/\\:*?"<>|]/g, '-') + '.docx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

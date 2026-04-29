@@ -46,6 +46,61 @@ function addParte(isCliente = false) {
   updateInstancias();
 }
 
+/* Gera a lista de nomes para uma parte em litisconsórcio */
+function renderLitisNomesHTML(parte, isCliente) {
+  const rows = parte.membros.map((m, idx) => {
+    const podeRemover = parte.membros.length > 1;
+    const placeholder = isCliente
+      ? (idx === 0 ? 'ex: A, S.A.' : 'ex: B, Lda.')
+      : (idx === 0 ? 'ex: Réu A' : 'ex: Réu B');
+    return `
+      <div class="litis-nome-row" id="litis-m-${m.id}">
+        <input type="text" class="l-nome${idx === 0 ? ' p-nome' : ''}" data-pid="${parte.id}" data-mid="${m.id}"
+          value="${m.nome}" placeholder="${placeholder}" />
+        ${podeRemover ? `<button class="btn-x btn-x-sm" onclick="rmLitisMembro(${parte.id}, ${m.id})"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5L5 15"/></svg></button>` : ''}
+      </div>`;
+  }).join('');
+  return `
+    <div class="litis-nomes-list" id="litis-nomes-${parte.id}">${rows}</div>
+    <button class="btn-add-litis" onclick="addLitisMembro(${parte.id})">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 4v12M4 10h12"/></svg>
+      Membro
+    </button>`;
+}
+
+function addLitisMembro(parteId) {
+  const parte = S.partes.find(p => p.id === parteId);
+  if (!parte || parte.relacao !== 'litis') return;
+  const id = ++S.membroIdx;
+  parte.membros.push({ id, nome: '', valorPedido: 0, decaimento: null });
+  rerenderLitisNomes(parte);
+  onAnyInput();
+}
+
+function rmLitisMembro(parteId, membroId) {
+  const parte = S.partes.find(p => p.id === parteId);
+  if (!parte || parte.membros.length <= 1) return;
+  parte.membros = parte.membros.filter(m => m.id !== membroId);
+  // sincronizar parte.nome com primeiro membro
+  if (parte.membros[0]) parte.nome = parte.membros[0].nome;
+  rerenderLitisNomes(parte);
+  onAnyInput();
+}
+
+function rerenderLitisNomes(parte) {
+  const isCliente = parte.id === S.clienteId;
+  const wrap = $('#litis-nomes-' + parte.id);
+  if (!wrap) return;
+  const parent = wrap.parentElement;
+  // remover botão antigo e lista antiga
+  const oldBtn = parent.querySelector('.btn-add-litis');
+  if (oldBtn) oldBtn.remove();
+  wrap.outerHTML = renderLitisNomesHTML(parte, isCliente);
+  // rebind: os eventos de input ficam no listener geral do card
+  const card = $('#parte-' + parte.id);
+  if (card) card.addEventListener('input', e => onParteInput(e, parte.id, isCliente));
+}
+
 function renderParteRow(parte, isCliente) {
   const container = isCliente ? $('#clienteWrap') : $('#partesWrap');
   $('#parte-' + parte.id)?.remove();
@@ -55,20 +110,21 @@ function renderParteRow(parte, isCliente) {
   div.id = 'parte-' + parte.id;
 
   const isColig = parte.relacao === 'colig';
+  const isLitis = parte.relacao === 'litis';
   const podeRemover = !isCliente && S.partes.filter(p => p.id !== S.clienteId).length > 1;
 
   div.innerHTML = `
     <div class="parte-card-head">
       <div class="field" style="flex:1;">
         <div class="label"><span>${isCliente ? 'Nome / identificação do cliente' : 'Nome / identificação'}</span></div>
-        <input type="text" class="p-nome" value="${parte.nome}" placeholder="${isCliente ? 'ex: A, S.A.' : 'ex: Réu B'}" />
+        ${isLitis ? renderLitisNomesHTML(parte, isCliente) : `<input type="text" class="p-nome" value="${parte.nome}" placeholder="${isCliente ? 'ex: A, S.A.' : 'ex: Réu B'}" />`}
       </div>
-
 
       <div class="field" style="width:200px;">
         <div class="label"><span>Relação material</span></div>
         <select class="p-relacao" data-pid="${parte.id}">
-          <option value="autonoma"${parte.relacao !== 'colig' ? ' selected' : ''}>Parte autónoma</option>
+          <option value="autonoma"${parte.relacao === 'autonoma' ? ' selected' : ''}>Parte autónoma</option>
+          <option value="litis"${parte.relacao === 'litis' ? ' selected' : ''}>Litisconsórcio</option>
           <option value="colig"${parte.relacao === 'colig'  ? ' selected' : ''}>Coligação</option>
         </select>
       </div>
@@ -205,8 +261,22 @@ function rerenderMembros(parte) {
 function onRelacaoChange(e, parteId, isCliente) {
   const parte = S.partes.find(p => p.id === parteId);
   if (!parte) return;
-  parte.relacao = e.target.value;
-  if (parte.relacao !== 'colig' && parte.membros.length > 1) parte.membros = [parte.membros[0]];
+  const novaRelacao = e.target.value;
+  const anteriorRelacao = parte.relacao;
+  parte.relacao = novaRelacao;
+
+  if (novaRelacao === 'litis') {
+    // Ao entrar em litisconsórcio: manter só o primeiro membro (nome), sem pedido/decaimento
+    parte.membros = [{ id: parte.membros[0]?.id || ++S.membroIdx, nome: parte.membros[0]?.nome || parte.nome || '', valorPedido: 0, decaimento: null }];
+    parte.nome = parte.membros[0].nome;
+  } else if (novaRelacao === 'colig') {
+    // Ao entrar em coligação: garantir que há um membro com estrutura completa
+    parte.membros = [{ id: parte.membros[0]?.id || ++S.membroIdx, nome: parte.membros[0]?.nome || parte.nome || '', valorPedido: 0, decaimento: null }];
+  } else {
+    // parte autónoma: um único membro
+    parte.membros = [parte.membros[0] || { id: ++S.membroIdx, nome: parte.nome || '', valorPedido: 0, decaimento: null }];
+  }
+
   renderParteRow(parte, isCliente);
   updateInstancias();
   onAnyInput();
@@ -220,6 +290,15 @@ function onParteInput(e, parteId, isCliente) {
   if (el.classList.contains('p-mandatario')) parte.mandatario = el.value;
   if (el.classList.contains('p-artigo')) parte.artigo = el.value;
   if (el.classList.contains('p-dec')) parte.decaimento = num(el.value);
+  if (el.classList.contains('l-nome')) {
+    // nome de membro do litisconsórcio
+    const m = parte.membros.find(x => x.id === +el.dataset.mid);
+    if (m) {
+      m.nome = el.value;
+      // sincronizar parte.nome com o primeiro membro
+      if (parte.membros[0] && el.dataset.mid == parte.membros[0].id) parte.nome = el.value;
+    }
+  }
   if (el.classList.contains('m-nome')) {
     const m = parte.membros.find(x => x.id === +el.dataset.mid);
     if (m) m.nome = el.value;
@@ -262,11 +341,18 @@ function updateDecInstLabels(parte) {
   });
 }
 
+function getParteNomeDisplay(parte) {
+  if (parte.relacao === 'litis' && parte.membros.length > 1) {
+    return parte.membros.map(m => m.nome || '?').join(' / ');
+  }
+  return parte.nome || 'Parte';
+}
+
 function updateInstNomes() {
   S.partes.forEach(parte => {
     $$('.inst-parte-block[data-pid="' + parte.id + '"] .inst-parte-titulo').forEach(el => {
       const isCliente = parte.id === S.clienteId;
-      el.innerHTML = `${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}`;
+      el.innerHTML = `${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}`;
     });
     parte.membros.forEach(m => {
       $$('.colig-membro-row[data-mid="' + m.id + '"] .colig-membro-nome').forEach(el => {
@@ -409,7 +495,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, instTipo) {
   if (parte.relacao === 'colig') {
     return `
       <div class="inst-parte-block" data-pid="${parte.id}">
-        <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
+        <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
         <div class="inst-parte-coluna-sel">
           <div class="label"><span>Coluna (Tab. I)</span></div>
           <select class="i-coluna-grupo" data-pid="${parte.id}">
@@ -430,7 +516,7 @@ function buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, instTipo) {
   const tjStr = tjTeo.base > 0 ? fmtEuroLong(tjTeo.base) : '—';
   return `
     <div class="inst-parte-block" data-pid="${parte.id}">
-      <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
+      <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
       <div class="grid grid-4">
         <div class="field">
           <div class="label"><span>Coluna (Tab. I)</span></div>
@@ -481,7 +567,7 @@ function buildInstTCHTML(instId) {
     const isCliente = parte.id === S.clienteId;
     return `
       <div class="inst-parte-block" data-pid="${parte.id}">
-        <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
+        <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
         <div class="hint" style="margin-bottom:.5rem;">TJ fixada pelo tribunal (DL 303/98). Consulte a tabela TC no painel de referência.</div>
         <div class="grid grid-3">
           <div class="field">
@@ -520,7 +606,7 @@ function buildInstTab2HTML(instId, tipo) {
       const isCliente = parte.id === S.clienteId;
       return `
         <div class="inst-parte-block" data-pid="${parte.id}">
-          <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${parte.nome || 'Parte'}</div>
+          <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
           <div class="grid grid-3">
             <div class="field">
               <div class="label"><span>TJ efetivamente paga (€)</span></div>
@@ -940,17 +1026,21 @@ function renderResult() {
         ${st.tribunal ? `<div class="rrow"><span class="d">Tribunal</span><span class="v">${st.tribunal}</span></div>` : ''}
         <div class="rrow"><span class="d">Valor da ação</span><span class="v">${fmtEuroLong(r.valorAcao)}</span></div>
         <div class="rrow"><span class="d">Cliente</span><span class="v">${r.cliente.nome}${decClienteInfo}</span></div>
-        ${r.partes.map(p => `
+        ${r.partes.map(p => {
+          const relLabel = p.relacao === 'colig' ? 'Coligação' : p.relacao === 'litis' ? 'Litisconsórcio' : 'Autónoma';
+          const membrosLitis = p.relacao === 'litis' && p.membros.length > 1
+            ? p.membros.map(m => `<div class="rrow" style="padding-left:1.5rem;"><span class="d">${m.nome || '—'}</span><span class="v">membro</span></div>`).join('')
+            : '';
+          const membrosColig = p.relacao === 'colig' && p.membros.length > 1
+            ? p.membros.map(m => `<div class="rrow" style="padding-left:1.5rem;"><span class="d">${m.nome}</span><span class="v">Pedido: ${fmtEuroLong(m.valorPedido)}${m.decaimento !== null && m.decaimento !== undefined ? ' · Dec.: ' + fmtPct(m.decaimento) : ''}</span></div>`).join('')
+            : '';
+          return `
           <div class="rrow">
-            <span class="d">${p.nome}</span>
-            <span class="v">${p.relacao === 'colig' ? 'Coligação' : 'Autónoma'} · Decaimento: ${fmtPct(p.decaimento)}</span>
+            <span class="d">${getParteNomeDisplay(p)}</span>
+            <span class="v">${relLabel} · Decaimento: ${fmtPct(p.decaimento)}</span>
           </div>
-          ${p.relacao === 'colig' && p.membros.length > 1 ? p.membros.map(m => `
-            <div class="rrow" style="padding-left:1.5rem;">
-              <span class="d">${m.nome}</span>
-              <span class="v">Pedido: ${fmtEuroLong(m.valorPedido)}${m.decaimento !== null && m.decaimento !== undefined ? ' · Dec.: ' + fmtPct(m.decaimento) : ''}</span>
-            </div>`).join('') : ''}
-        `).join('')}
+          ${membrosLitis}${membrosColig}`;
+        }).join('')}
         <div class="rrow"><span class="d">Partes com algum vencimento (entram no rateio Rubrica C)</span><span class="v">${r.nVencedores}</span></div>
       </div>
     </div>`;
