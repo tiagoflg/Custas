@@ -414,7 +414,7 @@ const TIPOS_OPTS = TIPOS_PRINCIPAIS.map(t => `<option value="${t.v}">${t.l}</opt
 
 function addInst() {
   const id = ++S.instIdx;
-  S.inst.push({ id, tipo: '1inst', dispensaRem: 0 });
+  S.inst.push({ id, tipo: '1inst', dispensaRem: 0, partesExcluidas: new Set() });
   const div = document.createElement('div');
   div.className = 'instance';
   div.id = 'inst-' + id;
@@ -458,27 +458,56 @@ function buildInstHTML(id) {
         <div class="field-hint">0% = sem dispensa · 100% = dispensa total</div>
       </div>
     </div>
+    <div class="inst-partes-sel" id="inst-partes-sel-${id}">
+      ${buildInstPartesSelHTML(id)}
+    </div>
     <div class="inst-modo-wrap" id="inst-modo-${id}">
       ${buildInstModoHTML(id, tipoAtual)}
     </div>
   `;
 }
 
+/* ── Selector de partes nesta instância ── */
+function buildInstPartesSelHTML(instId) {
+  const todasPartes = S.partes;
+  if (todasPartes.length === 0) return '';
+  const instData = S.inst.find(i => i.id === instId) || {};
+  const excluidas = instData.partesExcluidas || new Set();
+  const checks = todasPartes.map(parte => {
+    const isCliente = parte.id === S.clienteId;
+    const nome = getParteNomeDisplay(parte);
+    const checked = !excluidas.has(parte.id) ? ' checked' : '';
+    return `<label class="inst-parte-check" data-pid="${parte.id}">
+      <input type="checkbox" class="i-parte-incl" data-pid="${parte.id}" data-instid="${instId}"${checked} />
+      ${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${nome}
+    </label>`;
+  }).join('');
+  return `
+    <div class="inst-partes-sel-wrap">
+      <span class="inst-partes-sel-label">Partes nesta instância:</span>
+      ${checks}
+    </div>`;
+}
+
 function buildInstModoHTML(instId, tipo) {
   const modo = tipoModo(tipo);
-  if (modo === 'tc') return buildInstTCHTML(instId);
-  if (modo === 'tab2') return buildInstTab2HTML(instId, tipo);
-  return buildInstTabIHTML(instId, tipo);  // Tab. I
+  const instData = S.inst.find(i => i.id === instId) || {};
+  const excluidas = instData.partesExcluidas || new Set();
+  if (modo === 'tc') return buildInstTCHTML(instId, excluidas);
+  if (modo === 'tab2') return buildInstTab2HTML(instId, tipo, excluidas);
+  return buildInstTabIHTML(instId, tipo, excluidas);  // Tab. I
 }
 
 /* ── Tab. I: coluna por parte + TJ paga ── */
-function buildInstTabIHTML(instId, tipo) {
+function buildInstTabIHTML(instId, tipo, excluidas = new Set()) {
   const valorAcao = getValorAcao();
   if (S.partes.length === 0) return '';
-  return S.partes.map(parte => {
-    const isCliente = parte.id === S.clienteId;
-    return buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, tipo);
-  }).join('');
+  return S.partes
+    .filter(parte => !excluidas.has(parte.id))
+    .map(parte => {
+      const isCliente = parte.id === S.clienteId;
+      return buildInstParteTabIHTML(instId, parte, valorAcao, isCliente, tipo);
+    }).join('');
 }
 
 /* Campo de decaimento por instância — incluído em cada bloco de parte dentro da instância */
@@ -572,30 +601,32 @@ function buildInstMembroHTML(instId, parte, m, valorAcao, coluna) {
 }
 
 /* ── Tribunal Constitucional: valor livre ── */
-function buildInstTCHTML(instId) {
+function buildInstTCHTML(instId, excluidas = new Set()) {
   if (S.partes.length === 0) return '';
-  return S.partes.map(parte => {
-    const isCliente = parte.id === S.clienteId;
-    return `
-      <div class="inst-parte-block" data-pid="${parte.id}">
-        <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
-        <div class="hint" style="margin-bottom:.5rem;">TJ fixada pelo tribunal (DL 303/98). Consulte a tabela TC no painel de referência.</div>
-        <div class="grid grid-3">
-          <div class="field">
-            <div class="label"><span>TJ efetivamente paga (€)</span></div>
-            <div class="affix">
-              <span class="affix-pre">€</span>
-              <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
+  return S.partes
+    .filter(parte => !excluidas.has(parte.id))
+    .map(parte => {
+      const isCliente = parte.id === S.clienteId;
+      return `
+        <div class="inst-parte-block" data-pid="${parte.id}">
+          <div class="inst-parte-titulo">${isCliente ? '<span class="tag-cliente">Cliente</span> ' : ''}${getParteNomeDisplay(parte)}</div>
+          <div class="hint" style="margin-bottom:.5rem;">TJ fixada pelo tribunal (DL 303/98). Consulte a tabela TC no painel de referência.</div>
+          <div class="grid grid-3">
+            <div class="field">
+              <div class="label"><span>TJ efetivamente paga (€)</span></div>
+              <div class="affix">
+                <span class="affix-pre">€</span>
+                <input type="number" class="i-tj" data-pid="${parte.id}" min="0" step="any" placeholder="0,00" />
+              </div>
             </div>
+            ${buildDecInstFieldHTML(instId, parte)}
           </div>
-          ${buildDecInstFieldHTML(instId, parte)}
-        </div>
-      </div>`;
-  }).join('');
+        </div>`;
+    }).join('');
 }
 
 /* ── Tab. II: subtipo + valor pago ── */
-function buildInstTab2HTML(instId, tipo) {
+function buildInstTab2HTML(instId, tipo, excluidas = new Set()) {
   const grupos = TAB2_GRUPOS[tipo];
   const itens = grupos
     ? TABELA_II.filter(i => grupos.includes(i.grupo))
@@ -608,12 +639,13 @@ function buildInstTab2HTML(instId, tipo) {
   }).join('');
 
   if (S.partes.length === 0) return '';
+  const partesActivas = S.partes.filter(parte => !excluidas.has(parte.id));
   return `
     <div class="field" style="max-width:480px; margin-bottom:.75rem;">
       <div class="label"><span>Acto / incidente (Tab. II)</span></div>
       <select class="i-tab2sub">${opts}</select>
     </div>
-    ${S.partes.map(parte => {
+    ${partesActivas.map(parte => {
       const isCliente = parte.id === S.clienteId;
       return `
         <div class="inst-parte-block" data-pid="${parte.id}">
@@ -656,7 +688,32 @@ function bindInstEvents(div, id) {
     });
   }
 
+  // Checkboxes de inclusão de partes nesta instância
+  bindInstPartesSelEvents(div, id);
+
   div.addEventListener('input', onInstInput);
+}
+
+function bindInstPartesSelEvents(div, instId) {
+  div.querySelectorAll('.i-parte-incl').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const pid = +cb.dataset.pid;
+      const inst = S.inst.find(i => i.id === instId);
+      if (!inst) return;
+      if (!inst.partesExcluidas) inst.partesExcluidas = new Set();
+      if (cb.checked) {
+        inst.partesExcluidas.delete(pid);
+      } else {
+        inst.partesExcluidas.add(pid);
+      }
+      // Reconstruir apenas o modo (blocos de partes), preservando tipo e subtipo
+      const tipo = div.querySelector('.i-tipo')?.value || '1inst';
+      div.querySelector('.inst-modo-wrap').innerHTML = buildInstModoHTML(instId, tipo);
+      bindInstModoEvents(div, instId, tipo);
+      updateDecInstWrap();
+      onAnyInput();
+    });
+  });
 }
 
 function bindInstModoEvents(div, instId, tipo) {
@@ -711,6 +768,24 @@ function updateInstancias() {
   $$('.instance').forEach(div => {
     const instId = +div.id.replace('inst-', '');
     const tipo = div.querySelector('.i-tipo')?.value || '1inst';
+
+    // Limpar partes excluídas que já não existem (parte removida no Passo 1)
+    const inst = S.inst.find(i => i.id === instId);
+    if (inst && inst.partesExcluidas) {
+      const idsActuais = new Set(S.partes.map(p => p.id));
+      inst.partesExcluidas.forEach(pid => {
+        if (!idsActuais.has(pid)) inst.partesExcluidas.delete(pid);
+      });
+    }
+
+    // Reconstruir o selector de partes
+    const selWrap = div.querySelector('#inst-partes-sel-' + instId);
+    if (selWrap) {
+      selWrap.innerHTML = buildInstPartesSelHTML(instId);
+      bindInstPartesSelEvents(div, instId);
+    }
+
+    // Reconstruir o modo
     const wrap = div.querySelector('.inst-modo-wrap');
     if (wrap) {
       wrap.innerHTML = buildInstModoHTML(instId, tipo);
@@ -860,7 +935,14 @@ function collectState() {
       }
     });
 
+    const sInst2 = S.inst.find(x => x.id === i.id);
+    const excluidas = sInst2?.partesExcluidas || new Set();
+
     const tjPartes = S.partes.map(parte => {
+      // Parte excluída desta instância → tjPaga = 0, sem coluna relevante
+      if (excluidas.has(parte.id)) {
+        return { partId: parte.id, coluna: 'A', tjPaga: 0, tjTeorica: 0 };
+      }
       let tjPaga = 0, coluna = 'A';
       if (modo === 'tabI') {
         if (parte.relacao === 'colig') {
@@ -886,9 +968,8 @@ function collectState() {
     });
 
     const dispensaRem = num(el.querySelector('.i-dispensa-rem')?.value, 0);
-    // sincronizar tipo e dispensa no estado
-    const sInst = S.inst.find(x => x.id === i.id);
-    if (sInst) { sInst.tipo = tipo; sInst.dispensaRem = dispensaRem; }
+    // sincronizar tipo e dispensa no estado (sInst2 já foi encontrado acima)
+    if (sInst2) { sInst2.tipo = tipo; sInst2.dispensaRem = dispensaRem; }
 
     return { id: i.id, tipo, subtipo, dispensaRem, tjPartes };
   }).filter(Boolean);
@@ -1006,7 +1087,19 @@ function updateAvisoDecaimento() {
   if (!aviso) return;
   if (S.partes.length === 0) { aviso.style.display = 'none'; return; }
 
-  const soma = S.partes.reduce((s, p) => s + (p.decaimento || 0), 0);
+  // Determinar partes excluídas de TODAS as instâncias (não entram no aviso)
+  const partesExcluidasGlobal = new Set(
+    S.partes
+      .filter(p => S.inst.length > 0 && S.inst.every(inst =>
+        inst.partesExcluidas && inst.partesExcluidas.has(p.id)
+      ))
+      .map(p => p.id)
+  );
+
+  const partesActivas = S.partes.filter(p => !partesExcluidasGlobal.has(p.id));
+  if (partesActivas.length === 0) { aviso.style.display = 'none'; return; }
+
+  const soma = partesActivas.reduce((s, p) => s + (p.decaimento || 0), 0);
   const diff = Math.round((soma - 100) * 100) / 100; // evitar floating-point noise
 
   if (diff === 0) {
@@ -1398,7 +1491,8 @@ function saveState() {
           });
         }
         return {
-          id: i.id, tipo: i.tipo || '1inst', dispensaRem: i.dispensaRem || 0, tjPartes
+          id: i.id, tipo: i.tipo || '1inst', dispensaRem: i.dispensaRem || 0, tjPartes,
+          partesExcluidas: i.partesExcluidas ? Array.from(i.partesExcluidas) : []
         };
       }),
       enc: S.enc.map(e => ({
@@ -1447,7 +1541,7 @@ function loadState() {
     $('#instList').innerHTML = '';
     S.inst = [];
     (snap.inst || []).forEach(si => {
-      S.inst.push({ id: si.id, tipo: si.tipo, dispensaRem: si.dispensaRem || 0 });
+      S.inst.push({ id: si.id, tipo: si.tipo, dispensaRem: si.dispensaRem || 0, partesExcluidas: new Set(si.partesExcluidas || []) });
       S.instIdx = Math.max(S.instIdx, si.id);
       // Renderizar a instância (inline, sem chamar addInst que incrementaria S.instIdx)
       const instDiv = document.createElement('div');

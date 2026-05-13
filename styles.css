@@ -247,6 +247,31 @@ select {
   margin-bottom: .75rem; transition: border-color .15s;
 }
 .instance:hover { border-color: var(--border-hi); }
+
+/* ── Selector de partes por instância ── */
+.inst-partes-sel {
+  margin-bottom: .75rem;
+}
+.inst-partes-sel-wrap {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: .5rem .75rem;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: .45rem .75rem;
+}
+.inst-partes-sel-label {
+  font-size: .75rem; color: var(--text-2); font-weight: 500;
+  white-space: nowrap; margin-right: .25rem;
+}
+.inst-parte-check {
+  display: flex; align-items: center; gap: .35rem;
+  font-size: .78rem; color: var(--text); cursor: pointer;
+  user-select: none;
+}
+.inst-parte-check input[type="checkbox"] {
+  width: 14px; height: 14px; cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .instance-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: .9rem;
