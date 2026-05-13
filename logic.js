@@ -353,276 +353,370 @@ function computeResult(state) {
     (p, i, arr) => arr.findIndex(x => x.id === p.id) === i
   );
 
-  /* ── 1. TJ base efectivamente paga pelo cliente (Rubrica A) ──
-     Soma simples das TJ pagas, sem correcção de decaimento.
-     O decaimento entra via coeficiente final de cada nota. */
+  /* ══════════════════════════════════════════════════════════════
+     AGRUPAMENTO DE INSTÂNCIAS POR CONJUNTO DE PARTES ACTIVAS
+     ══════════════════════════════════════════════════════════════
+     Duas instâncias pertencem ao mesmo grupo se e só se o conjunto
+     de partes com tjPaga > 0 (ou explicitamente incluídas) for
+     exactamente igual. Cada grupo é calculado de forma independente:
+     o seu próprio somaTJCorrigida, limGlobal, factoresVitoria e
+     limIndiv. As notas finais somam as contribuições de todos os
+     grupos em que cada parte participou.
+
+     Caso degenerado: todas as instâncias com o mesmo conjunto de
+     partes → um único grupo → resultado idêntico ao cálculo anterior.
+  */
+
+  /* ── Chave de agrupamento: IDs das partes com tjPaga > 0, ordenados ── */
+  function chaveGrupo(inst) {
+    const ids = (inst.tjPartes || [])
+      .filter(tp => (tp.tjPaga || 0) > 0)
+      .map(tp => tp.partId)
+      .sort((a, b) => a - b);
+    return ids.join(',');
+  }
+
+  /* ── Construir grupos ── */
+  const gruposMap = new Map(); // chave → { instâncias[] }
+  insts.forEach(inst => {
+    const k = chaveGrupo(inst);
+    if (!gruposMap.has(k)) gruposMap.set(k, []);
+    gruposMap.get(k).push(inst);
+  });
+  const grupos = Array.from(gruposMap.values());
+
+  /* ── Processar cada grupo ── */
+
+  // Acumuladores globais para display
+  let somaTJBase      = 0;
+  let somaRemEstimado = 0;
+  let somaTJCorrigida = 0; // soma bruta TJ + rem efectivo, SEM factor de vitória (base do limGlobal)
+  const instDetalheAll = []; // instDetalhe de todos os grupos (para display)
+
+  // Contribuições por nota: Map<"parteId[-membroId]" → { rubrA, rubrC, factorCliente }>
+  const contrib = new Map();
+
+  // Para display: limGlobal e limIndiv do cliente — soma sobre grupos
+  let limGlobalTotal  = 0;
+  let limIndivTotal   = 0;
+  let rubrCLimitada   = false;
+
+  // Para display: factoresVitoria agregados (ponderados pela TJ de cada grupo)
+  const fvAgregado = new Map(); // parteId → { fvPeso, pesoTotal }
+  partesUnicas.forEach(p => fvAgregado.set(p.id, { fvPeso: 0, pesoTotal: 0 }));
+
+  grupos.forEach(instsGrupo => {
+
+    /* ── IDs das partes activas neste grupo ── */
+    const idsActivos = new Set(
+      instsGrupo.flatMap(inst =>
+        (inst.tjPartes || [])
+          .filter(tp => (tp.tjPaga || 0) > 0)
+          .map(tp => tp.partId)
+      )
+    );
+    const partesGrupo = partesUnicas.filter(p => idsActivos.has(p.id));
+
+    /* ── 1g. TJ base do cliente neste grupo ── */
+    const tjClienteGrupo = instsGrupo.reduce((s, inst) => {
+      const tp = inst.tjPartes?.find(p => p.partId === cliente.id);
+      return s + (tp?.tjPaga || 0);
+    }, 0);
+
+    /* ── 2g. somaTJCorrigida do grupo ── */
+    let somaTJGrupo        = 0;
+    let somaRemGrupo       = 0; // remanescente efectivo do cliente neste grupo
+
+    const instDetalheGrupo = instsGrupo.map(inst => {
+      const dispensaFrac = (inst.dispensaRem || 0) / 100;
+      let tjBaseInst = 0, remInstTotal = 0, tjCorrigidaInst = 0;
+
+      const tjPartesCorrigidas = (inst.tjPartes || []).map(tp => {
+        const parte = partesUnicas.find(p => p.id === tp.partId);
+        if (!parte) return { ...tp, remEfectivo: 0, tjCorrigida: tp.tjPaga || 0 };
+
+        const tjBase = tp.tjPaga || 0;
+        tjBaseInst   += tjBase;
+        somaTJBase   += tjBase; // acumulador global
+
+        let remEfectivo = 0;
+        if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && tjBase > 0) {
+          const col      = normColuna(tp.coluna || 'A');
+          const remTotal = calcRemParteInst(parte, valorAcao, col);
+          remEfectivo    = remTotal * (1 - dispensaFrac);
+          remInstTotal  += remEfectivo;
+          if (parte.id === cliente.id) {
+            somaRemEstimado += remEfectivo; // global
+            somaRemGrupo    += remEfectivo;
+          }
+        }
+
+        const tjBruta       = tjBase + remEfectivo;
+        somaTJCorrigida    += tjBruta; // global
+        somaTJGrupo        += tjBruta;
+        tjCorrigidaInst    += tjBruta;
+
+        const decParte         = decEfectivo(parte, inst.id) / 100;
+        const factorVitoriaParte = 1 - decParte;
+        const tjCorr           = tjBruta * factorVitoriaParte;
+
+        return { ...tp, remEfectivo, tjCorrigida: tjCorr, decUsado: decParte * 100, factorVitoria: factorVitoriaParte };
+      });
+
+      const detalhe = { ...inst, dispensaFrac, tjBaseInst, remInstTotal, tjCorrigidaInst, tjPartesCorrigidas };
+      instDetalheAll.push(detalhe);
+      return detalhe;
+    });
+
+    /* ── 3g. limGlobal do grupo ── */
+    const limGlobalGrupo = somaTJGrupo * 0.5;
+    limGlobalTotal += limGlobalGrupo;
+
+    /* ── 4g. factoresVitoria do grupo (só sobre partesGrupo) ── */
+    const factoresVitoriaGrupo = partesGrupo.map(parte => {
+      const temDecPorInst = parte.decaimentoInst && Object.keys(parte.decaimentoInst).length > 0;
+      let fv;
+      if (temDecPorInst) {
+        let pesoTotal = 0, fvPonderado = 0;
+        instDetalheGrupo.forEach(inst => {
+          const tp = inst.tjPartesCorrigidas?.find(t => t.partId === parte.id);
+          if (!tp) return;
+          const tjCorr = tp.tjCorrigida || 0;
+          const dec    = decEfectivo(parte, inst.id) / 100;
+          fvPonderado += (1 - dec) * tjCorr;
+          pesoTotal   += tjCorr;
+        });
+        fv = pesoTotal > 0 ? fvPonderado / pesoTotal : (1 - (parte.decaimento || 0) / 100);
+      } else {
+        fv = 1 - (parte.decaimento || 0) / 100;
+      }
+      // Acumular para display agregado
+      const agg = fvAgregado.get(parte.id);
+      if (agg) { agg.fvPeso += fv * somaTJGrupo; agg.pesoTotal += somaTJGrupo; }
+      return { id: parte.id, fv };
+    });
+
+    const somaFVGrupo  = factoresVitoriaGrupo.reduce((s, x) => x.fv > 0 ? s + x.fv : s, 0);
+    const fvClienteGrupo = factoresVitoriaGrupo.find(x => x.id === cliente.id)?.fv || factorClienteGlobal;
+
+    /* ── 5g. limIndiv do cliente neste grupo ── */
+    const limIndivClienteGrupoBruto = somaFVGrupo > 0
+      ? limGlobalGrupo * fvClienteGrupo / somaFVGrupo
+      : 0;
+    let limIndivClienteGrupo = limIndivClienteGrupoBruto;
+    // Limite de honorários: aplica proporcionalmente ao peso do grupo no total
+    if (limHon && honReais > 0) {
+      // Será aplicado globalmente no final; aqui guarda-se o valor bruto
+    }
+    limIndivTotal += limIndivClienteGrupo;
+
+    /* ── 6g. Contribuições das notas neste grupo ── */
+    // Partes vencidas activas neste grupo
+    const partesVencidasGrupo = partesGrupo.filter(p =>
+      p.id !== cliente.id && (p.decaimento || 0) > 0
+    );
+
+    // Construir notasTemp do grupo
+    const notasTempGrupo = [];
+    partesVencidasGrupo.forEach(parte => {
+      const decGrupoP = (parte.decaimento || 0) / 100;
+      if (parte.relacao === 'colig' && parte.membros.length > 0) {
+        const totalPedidos    = parte.membros.reduce((s, m) => s + (m.valorPedido || 0), 0);
+        const temDecIndividual = parte.membros.some(
+          m => m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
+        );
+        parte.membros.forEach(m => {
+          let coefParte;
+          if (temDecIndividual) {
+            const decM = (m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== '')
+              ? (m.decaimento / 100) : decGrupoP;
+            coefParte = decM;
+          } else {
+            const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
+            coefParte  = decGrupoP * prop;
+          }
+          const propPedido = totalPedidos > 0
+            ? (m.valorPedido || 0) / totalPedidos
+            : 1 / parte.membros.length;
+          notasTempGrupo.push({
+            parteId: parte.id, membroId: m.id,
+            nome: m.nome || parte.nome, grupo: parte.nome, relacao: parte.relacao,
+            coefParte, pesoRubrA: coefParte,
+            proporcao: propPedido, valorPedido: m.valorPedido || 0,
+            totalPedidosGrupo: totalPedidos,
+          });
+        });
+      } else {
+        notasTempGrupo.push({
+          parteId: parte.id, membroId: null,
+          nome: parte.nome, grupo: null, relacao: parte.relacao,
+          coefParte: decGrupoP, pesoRubrA: decGrupoP,
+          proporcao: null, valorPedido: null, totalPedidosGrupo: null,
+        });
+      }
+    });
+
+    // Normalizar pesos dentro do grupo
+    const nVencidosGrupo   = notasTempGrupo.length;
+    const somaDecGrupo     = notasTempGrupo.reduce((s, n) => s + n.coefParte, 0);
+    notasTempGrupo.forEach(n => {
+      n.pesoRubrA    = somaDecGrupo > 0 ? n.coefParte / somaDecGrupo : 1 / nVencidosGrupo;
+      n.nVencidosTotal = nVencidosGrupo;
+    });
+
+    // Calcular fvCliente neste grupo para rubrC
+    const fvCli = fvClienteGrupo;
+
+    // Acumular contribuições
+    notasTempGrupo.forEach(n => {
+      const chaveNota = n.parteId + (n.membroId != null ? '-' + n.membroId : '');
+      const rubrAContrib = tjClienteGrupo * n.pesoRubrA * fvCli;
+      const coefRubrC    = n.coefParte * fvCli;
+      // Rubrica C: usa o limIndiv do CLIENTE neste grupo (não da parte vencida)
+      // Semântica: o cliente recupera até ao seu limite, rateado pelo decaimento de cada parte
+      const rubrCContrib = limIndivClienteGrupo * coefRubrC;
+
+      if (!contrib.has(chaveNota)) {
+        contrib.set(chaveNota, {
+          parteId: n.parteId, membroId: n.membroId,
+          nome: n.nome, grupo: n.grupo, relacao: n.relacao,
+          proporcao: n.proporcao, valorPedido: n.valorPedido,
+          totalPedidosGrupo: n.totalPedidosGrupo,
+          coefParte: n.coefParte, // decaimento global da parte
+          rubrA: 0, rubrC: 0,
+          factorCliente: fvCli,
+          nVencidosTotal: nVencidosGrupo,
+        });
+      }
+      const c = contrib.get(chaveNota);
+      c.rubrA += rubrAContrib;
+      c.rubrC += rubrCContrib;
+      // factorCliente e nVencidosTotal do maior grupo (informativo)
+    });
+  }); // fim forEach grupos
+
+  /* ── Remanescente total e imputação (global, para display) ── */
+  const somaRemTotal = instDetalheAll.reduce((s, inst) =>
+    s + (inst.tjPartesCorrigidas || []).reduce((ss, tp) => ss + (tp.remEfectivo || 0), 0), 0);
+
+  const poolRemImputavel = instDetalheAll.reduce((s, inst) =>
+    s + (inst.tjPartesCorrigidas || []).reduce((ss, tp) => {
+      const parte = partesUnicas.find(p => p.id === tp.partId);
+      if (!parte) return ss;
+      const fv = 1 - decEfectivo(parte, inst.id) / 100;
+      return ss + (tp.remEfectivo || 0) * fv;
+    }, 0), 0);
+
+  const somaDecVencidas = partesUnicas.reduce((s, p) => s + (p.decaimento || 0), 0);
+  const imputacaoRem = partesUnicas
+    .filter(p => (p.decaimento || 0) > 0)
+    .map(p => {
+      const proporcao = somaDecVencidas > 0 ? (p.decaimento || 0) / somaDecVencidas : 0;
+      return { parteId: p.id, nome: p.nome, decaimento: p.decaimento || 0, proporcao, montante: poolRemImputavel * proporcao };
+    });
+
+  /* ── Limite de honorários: aplicar ao limIndivTotal ── */
+  const limIndivClienteBruto = limIndivTotal;
+  let limIndiv = limIndivClienteBruto;
+  if (limHon && honReais > 0 && honReais < limIndivClienteBruto) {
+    limIndiv    = honReais;
+    rubrCLimitada = true;
+    // Reescalar rubrC de cada contribuição proporcionalmente
+    const escala = honReais / limIndivClienteBruto;
+    contrib.forEach(c => { c.rubrC *= escala; });
+  }
+
+  /* ── factoresVitoria agregados para display ── */
+  const factoresVitoria = partesUnicas.map(p => {
+    const agg = fvAgregado.get(p.id);
+    const fv  = agg && agg.pesoTotal > 0 ? agg.fvPeso / agg.pesoTotal : (1 - (p.decaimento || 0) / 100);
+    return { id: p.id, fv };
+  });
+  const somaFactoresVitoria = factoresVitoria.reduce((s, x) => x.fv > 0 ? s + x.fv : s, 0);
+  const nVencedores         = factoresVitoria.filter(x => x.fv > 0).length;
+  const fvCliente           = factoresVitoria.find(x => x.id === cliente.id)?.fv || factorClienteGlobal;
+  const factorCliente       = fvCliente;
+
+  /* ── TJ base paga pelo cliente (global, para Rubrica A display) ── */
   const tjBasePagaCliente = insts.reduce((s, inst) => {
     const tp = inst.tjPartes?.find(p => p.partId === cliente.id);
     return s + (tp?.tjPaga || 0);
   }, 0);
 
-  /* ── 2. Rubrica B ── */
+  /* ── Rubrica B (global) ── */
   const rubrB = encargos.reduce((s, e) => s + (e.val || 0), 0);
 
-  /* ── 3. Somatório de TJ para Rubrica C ──
-
-     Por instância, para cada parte:
-       dispensaFrac  = dispensaRem_inst / 100
-       remEfectivo   = remanescente × (1 − dispensaFrac)
-
-     A base do limite de 50% (art. 26.º/6 RCP) é a soma de TODAS as TJ
-     efectivamente pagas + remanescente efectivo, SEM desconto de decaimento.
-     O decaimento só entra nas notas individuais (coeficiente por parte).
-
-     A "TJ corrigida" mostrada no detalhe tem valor informativo:
-       tjCorrigida = (tjBase + remEfectivo) × (1 − dec_parte_inst/100)
-     — representa o contributo líquido de cada parte para o rateio, mas
-     NÃO é usada como base do limite global.
-  */
-  let somaTJBase = 0;
-  let somaRemEstimado = 0;
-  let somaTJCorrigida = 0; // base real para o limite: sem factor de vitória
-
-  const instDetalhe = insts.map(inst => {
-    const dispensaFrac = ((inst.dispensaRem || 0)) / 100;
-    let tjBaseInst = 0;
-    let remInstTotal = 0;
-    let tjCorrigidaInst = 0;
-
-    const tjPartesCorrigidas = (inst.tjPartes || []).map(tp => {
-      const parte = partesUnicas.find(p => p.id === tp.partId);
-      if (!parte) return { ...tp, remEfectivo: 0, tjCorrigida: tp.tjPaga || 0 };
-
-      const tjBase = tp.tjPaga || 0;
-      tjBaseInst += tjBase;
-      somaTJBase += tjBase;
-
-      let remEfectivo = 0;
-      if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && tjBase > 0) {
-        const col = normColuna(tp.coluna || 'A');
-        const remTotal = calcRemParteInst(parte, valorAcao, col);
-        remEfectivo = remTotal * (1 - dispensaFrac);
-        remInstTotal += remEfectivo;
-        if (parte.id === cliente.id) somaRemEstimado += remEfectivo;
-      }
-
-      // Base para o limite de 50%: TJ + rem efectivo, SEM factor de vitória
-      const tjBruta = tjBase + remEfectivo;
-      somaTJCorrigida += tjBruta;
-      tjCorrigidaInst += tjBruta;
-
-      // Factor de vitória: apenas para exibição informativa no detalhe
-      const decParte = decEfectivo(parte, inst.id) / 100;
-      const factorVitoriaParte = 1 - decParte;
-      const tjCorr = tjBruta * factorVitoriaParte; // informativo
-
-      return { ...tp, remEfectivo, tjCorrigida: tjCorr, decUsado: decParte * 100, factorVitoria: factorVitoriaParte };
-    });
-
-    return { ...inst, dispensaFrac, tjBaseInst, remInstTotal, tjCorrigidaInst, tjPartesCorrigidas };
-  });
-
-  const somaTJTotal = somaTJBase + somaRemEstimado; // mantém compatibilidade no display
-
-  /* ── 3b. Remanescente total efectivo de todas as partes (para display) ── */
-  const somaRemTotal = instDetalhe.reduce((s, inst) => {
-    return s + (inst.tjPartesCorrigidas || []).reduce((ss, tp) => ss + (tp.remEfectivo || 0), 0);
-  }, 0);
-
-  /* ── 3c. Imputação do remanescente às partes vencidas ──
-     Pool imputável = Σ_i (rem_i × fv_i)   [contributo de cada parte na proporção da sua vitória]
-     Parte vencida j recebe: pool × (dec_j / Σ dec_k)   [k = todas as partes com dec > 0]
-
-     Nota: uma parte com vitória parcial é simultaneamente emitente (pelo lado da vitória)
-     e receptora (pelo lado do decaimento). */
-  const poolRemImputavel = instDetalhe.reduce((s, inst) => {
-    return s + (inst.tjPartesCorrigidas || []).reduce((ss, tp) => {
-      const parte = partesUnicas.find(p => p.id === tp.partId);
-      if (!parte) return ss;
-      const fv = 1 - decEfectivo(parte, inst.id) / 100;
-      return ss + (tp.remEfectivo || 0) * fv;
-    }, 0);
-  }, 0);
-
-  const somaDecVencidas = partesUnicas.reduce((s, p) => s + (p.decaimento || 0), 0);
-
-  const imputacaoRem = partesUnicas
-    .filter(p => (p.decaimento || 0) > 0)
-    .map(p => {
-      const proporcao = somaDecVencidas > 0 ? (p.decaimento || 0) / somaDecVencidas : 0;
-      return {
-        parteId: p.id,
-        nome: p.nome,
-        decaimento: p.decaimento || 0,
-        proporcao,
-        montante: poolRemImputavel * proporcao,
-      };
-    });
-
-  /* ── 4. Limite global Rubrica C ──
-     50% do somatório real (TJ pagas + rem. efectivo, sem factor de vitória). */
-  const limGlobal = somaTJCorrigida * 0.5;
-
-  /* ── 5. Factor de vitória de cada parte para o rateio (art. 32.º/2) ──
-     Quando há decaimento por instância, o factor de vitória de cada parte
-     é ponderado pelas TJ corrigidas de cada instância em que participou.
-     Se não houver decaimento por instância, usa o factor global. */
-  const factoresVitoria = partesUnicas.map(parte => {
-    // Verificar se esta parte tem decaimento diferenciado por instância
-    const temDecPorInst = parte.decaimentoInst && Object.keys(parte.decaimentoInst).length > 0;
-    let fv;
-    if (temDecPorInst) {
-      // Factor ponderado: média dos factores de vitória por instância,
-      // ponderada pela TJ corrigida de cada instância
-      let pesoTotal = 0;
-      let fvPonderado = 0;
-      instDetalhe.forEach(inst => {
-        const tp = inst.tjPartesCorrigidas?.find(t => t.partId === parte.id);
-        if (!tp) return;
-        const tjCorr = tp.tjCorrigida || 0;
-        const dec = decEfectivo(parte, inst.id) / 100;
-        fvPonderado += (1 - dec) * tjCorr;
-        pesoTotal += tjCorr;
-      });
-      fv = pesoTotal > 0 ? fvPonderado / pesoTotal : (1 - (parte.decaimento || 0) / 100);
-    } else {
-      fv = 1 - (parte.decaimento || 0) / 100;
-    }
-    return { id: parte.id, fv };
-  });
-
-  const somaFactoresVitoria = factoresVitoria.reduce((s, x) => x.fv > 0 ? s + x.fv : s, 0);
-  const nVencedores = factoresVitoria.filter(x => x.fv > 0).length;
-
-  const fvCliente = factoresVitoria.find(x => x.id === cliente.id)?.fv || factorClienteGlobal;
-  const limIndivClienteBruto = somaFactoresVitoria > 0
-    ? limGlobal * fvCliente / somaFactoresVitoria
-    : 0;
-  let limIndiv = limIndivClienteBruto;
-  let rubrCLimitada = false;
-  if (limHon && honReais > 0 && honReais < limIndivClienteBruto) {
-    limIndiv = honReais;
-    rubrCLimitada = true;
-  }
-
-  /* ── 6. Factor do cliente para coeficientes das notas ──
-     Usa o factor global como proxy (decaimento médio do cliente).
-     Para efeitos das rubricas A e B nas notas individuais, este é o comportamento esperado. */
-  const factorCliente = fvCliente;
-
-  /* ── 7. Total base ── */
-  const totalBruto = tjBasePagaCliente + rubrB + limIndiv;
-
-  /* ── 8. Notas autónomas ── */
-  const partesVencidas = partes.filter(p => (p.decaimento || 0) > 0);
+  /* ── Construir notasIndividuais a partir das contribuições ── */
+  const partesVencidas  = partes.filter(p => (p.decaimento || 0) > 0);
   const notasIndividuais = [];
 
-  /* Rubrica A (e B) — rateio da TJ do cliente pelas partes vencidas
-     (art. 527.º/528.º CPC):
-     a vencedora pagou a TJ uma só vez — não pode imputá-la integralmente
-     a cada vencido.
-
-     Critério de distribuição — proporcional ao decaimento individual:
-       pesoRubrA_X = decaimento_X / soma_de_todos_os_decaimentos_individuais
-
-     Isto garante que:
-       • quem perdeu mais paga mais da TJ (proporcionalidade);
-       • a soma de todos os pesos = 1 → não-enriquecimento garantido;
-       • membros de coligação entram no pool geral com o seu coeficiente individual.
-
-     Fallback (todos os decaimentos = 0): divisão igualitária por cabeças.
-
-     pesoRubrA_X = fracção da TJ imputada a esta nota (soma = 1)
-     rubrA_X     = tjBasePagaCliente × pesoRubrA_X × factorCliente
-     rubrB_X     = rubrB             × pesoRubrA_X × factorCliente  (mesmo critério)
-     rubrC_X     = limIndiv × coefParte_X × factorCliente           (decaimento × vitória)
-  */
-
-  // Primeiro passo: calcular o coeficiente individual de cada vencido
-  // para depois normalizar pelo total (denominador comum)
-  const notasTemp = [];
+  /* Rubrica B: rateada globalmente por todas as partes vencidas (mantém comportamento actual) */
+  // Calcular coeficientes globais para rubrB (proporcional ao decaimento global)
+  const notasBTemp = [];
   partesVencidas.forEach(parte => {
-    const decGrupo = (parte.decaimento || 0) / 100;
-
+    const decGrupoP = (parte.decaimento || 0) / 100;
     if (parte.relacao === 'colig' && parte.membros.length > 0) {
-      const totalPedidos = parte.membros.reduce((s, m) => s + (m.valorPedido || 0), 0);
+      const totalPedidos     = parte.membros.reduce((s, m) => s + (m.valorPedido || 0), 0);
       const temDecIndividual = parte.membros.some(
         m => m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
       );
       parte.membros.forEach(m => {
-        // Coeficiente de decaimento deste membro
         let coefParte;
         if (temDecIndividual) {
           const decM = (m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== '')
-            ? (m.decaimento / 100) : decGrupo;
+            ? (m.decaimento / 100) : decGrupoP;
           coefParte = decM;
         } else {
           const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
-          coefParte = decGrupo * prop;
+          coefParte  = decGrupoP * prop;
         }
-        const propPedido = totalPedidos > 0
-          ? (m.valorPedido || 0) / totalPedidos
-          : 1 / parte.membros.length;
-
-        notasTemp.push({
-          parteId: parte.id, membroId: m.id,
-          nome: m.nome || parte.nome, grupo: parte.nome, relacao: parte.relacao,
-          coefParte,           // decaimento individual (para Rubrica C e peso)
-          pesoRubrA: coefParte, // provisório — normalizado abaixo
-          proporcao: propPedido,
-          valorPedido: m.valorPedido || 0,
-          totalPedidosGrupo: totalPedidos,
-        });
+        notasBTemp.push({ parteId: parte.id, membroId: m.id, coefParte });
       });
     } else {
-      // Autónoma / litisconsórcio
-      notasTemp.push({
-        parteId: parte.id, membroId: null,
-        nome: parte.nome, grupo: null, relacao: parte.relacao,
-        coefParte: decGrupo,
-        pesoRubrA: decGrupo,  // provisório — normalizado abaixo
-        proporcao: null, valorPedido: null,
-        totalPedidosGrupo: null,
-      });
+      notasBTemp.push({ parteId: parte.id, membroId: null, coefParte: decGrupoP });
     }
   });
-
-  // Normalizar os pesos pela soma total dos decaimentos individuais
-  const nVencidosTotal = notasTemp.length;
-  const somaDecaimentos = notasTemp.reduce((s, n) => s + n.coefParte, 0);
-  notasTemp.forEach(n => {
-    n.pesoRubrA = somaDecaimentos > 0 ? n.coefParte / somaDecaimentos : 1 / nVencidosTotal;
-    n.nVencidosTotal = nVencidosTotal;
+  const somaDecB   = notasBTemp.reduce((s, n) => s + n.coefParte, 0);
+  const nNotasB    = notasBTemp.length;
+  notasBTemp.forEach(n => {
+    n.pesoRubrB = somaDecB > 0 ? n.coefParte / somaDecB : 1 / nNotasB;
   });
 
-  notasTemp.forEach(n => {
-    const coef = n.coefParte * factorCliente;
+  contrib.forEach((c, chaveNota) => {
+    const bEntry = notasBTemp.find(n =>
+      n.parteId === c.parteId && n.membroId === c.membroId
+    );
+    const pesoB  = bEntry ? bEntry.pesoRubrB : 0;
+    const rubrBNota = rubrB * pesoB * factorCliente;
     notasIndividuais.push({
-      parteId: n.parteId,
-      membroId: n.membroId,
-      nome: n.nome,
-      grupo: n.grupo,
-      relacao: n.relacao,
-      coef, coefParte: n.coefParte, factorCliente,
-      pesoRubrA: n.pesoRubrA,
-      nVencidosTotal: n.nVencidosTotal,
-      proporcao: n.proporcao,
-      valorPedido: n.valorPedido,
-      totalPedidosGrupo: n.totalPedidosGrupo,
-      rubrA: tjBasePagaCliente * n.pesoRubrA * factorCliente,
-      rubrB: rubrB           * n.pesoRubrA * factorCliente,
-      rubrC: limIndiv * coef,
-      total: tjBasePagaCliente * n.pesoRubrA * factorCliente
-           + rubrB             * n.pesoRubrA * factorCliente
-           + limIndiv * coef,
+      parteId: c.parteId, membroId: c.membroId,
+      nome: c.nome, grupo: c.grupo, relacao: c.relacao,
+      coef: c.coefParte * factorCliente,
+      coefParte: c.coefParte, factorCliente,
+      pesoRubrA: null, // já incorporado em rubrA (multi-grupo)
+      nVencidosTotal: c.nVencidosTotal,
+      proporcao: c.proporcao, valorPedido: c.valorPedido,
+      totalPedidosGrupo: c.totalPedidosGrupo,
+      rubrA: c.rubrA,
+      rubrB: rubrBNota,
+      rubrC: c.rubrC,
+      total: c.rubrA + rubrBNota + c.rubrC,
     });
   });
 
-  const totalAReceber = notasIndividuais.reduce((s, n) => s + n.total, 0);
-  const somaRubrA = notasIndividuais.reduce((s, n) => s + n.rubrA, 0);
-  const somaRubrC = notasIndividuais.reduce((s, n) => s + n.rubrC, 0);
+  const totalAReceber   = notasIndividuais.reduce((s, n) => s + n.total, 0);
+  const somaRubrA       = notasIndividuais.reduce((s, n) => s + n.rubrA, 0);
+  const somaRubrC       = notasIndividuais.reduce((s, n) => s + n.rubrC, 0);
+  // limIndiv já incorpora fvCliente — não multiplicar novamente por factorCliente
   const naoEnriquecimento = somaRubrA <= tjBasePagaCliente * factorCliente + 0.02
-                         && somaRubrC <= limIndiv * factorCliente + 0.02;
+                          && somaRubrC <= limIndiv + 0.02;
+
+  const somaTJTotal  = somaTJBase + somaRemEstimado;
+  const limGlobal    = limGlobalTotal; // soma dos limGlobal de cada grupo (para display)
+  // Reordenar pela ordem original de insts (os grupos podem ter alterado a ordem)
+  const instDetalheMap = new Map(instDetalheAll.map(d => [d.id, d]));
+  const instDetalhe    = insts.map(inst => instDetalheMap.get(inst.id)).filter(Boolean);
+  const totalBruto   = tjBasePagaCliente + rubrB + limIndiv;
 
   return {
     valorAcao, estimarRem, cliente, partes, todasPartes, partesUnicas,
