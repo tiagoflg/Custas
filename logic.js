@@ -477,14 +477,16 @@ function computeResult(state) {
       const temDecPorInst = parte.decaimentoInst && Object.keys(parte.decaimentoInst).length > 0;
       let fv;
       if (temDecPorInst) {
+        // Ponderar pelo tjPaga (não pelo tjCorrigida): evita fallback errado quando
+        // uma parte tem dec=100% numa instância (tjCorrigida=0 mas tjPaga>0).
         let pesoTotal = 0, fvPonderado = 0;
         instDetalheGrupo.forEach(inst => {
           const tp = inst.tjPartesCorrigidas?.find(t => t.partId === parte.id);
           if (!tp) return;
-          const tjCorr = tp.tjCorrigida || 0;
+          const tjBase = tp.tjPaga || 0; // peso = TJ paga, independente do factor de vitória
           const dec    = decEfectivo(parte, inst.id) / 100;
-          fvPonderado += (1 - dec) * tjCorr;
-          pesoTotal   += tjCorr;
+          fvPonderado += (1 - dec) * tjBase;
+          pesoTotal   += tjBase;
         });
         fv = pesoTotal > 0 ? fvPonderado / pesoTotal : (1 - (parte.decaimento || 0) / 100);
       } else {
@@ -517,9 +519,12 @@ function computeResult(state) {
     );
 
     // Construir notasTemp do grupo
+    // decEfectivoGrupo: usa o factor de vitória calculado para este grupo (já ponderado
+    // pelo decaimento por instância quando aplicável), em vez do decaimento global.
     const notasTempGrupo = [];
     partesVencidasGrupo.forEach(parte => {
-      const decGrupoP = (parte.decaimento || 0) / 100;
+      const fvParteGrupo  = factoresVitoriaGrupo.find(x => x.id === parte.id)?.fv ?? (1 - (parte.decaimento || 0) / 100);
+      const decGrupoP     = 1 - fvParteGrupo; // decaimento efectivo neste grupo
       if (parte.relacao === 'colig' && parte.membros.length > 0) {
         const totalPedidos    = parte.membros.reduce((s, m) => s + (m.valorPedido || 0), 0);
         const temDecIndividual = parte.membros.some(
@@ -556,13 +561,11 @@ function computeResult(state) {
       }
     });
 
-    // Normalizar pesos dentro do grupo
-    const nVencidosGrupo   = notasTempGrupo.length;
-    const somaDecGrupo     = notasTempGrupo.reduce((s, n) => s + n.coefParte, 0);
-    notasTempGrupo.forEach(n => {
-      n.pesoRubrA    = somaDecGrupo > 0 ? n.coefParte / somaDecGrupo : 1 / nVencidosGrupo;
-      n.nVencidosTotal = nVencidosGrupo;
-    });
+    // Rubrica A: não normalizar — o coefParte já é o coeficiente final correcto.
+    // rubrA = tjCliente × coefParte × fvCliente (sem divisão pelo somaCoef)
+    // Exemplo: T com dec=43% → rubrA = 1632 × 0,43 × 1,0 = 701,76 ✓
+    const nVencidosGrupo = notasTempGrupo.length;
+    notasTempGrupo.forEach(n => { n.nVencidosTotal = nVencidosGrupo; });
 
     // Calcular fvCliente neste grupo para rubrC
     const fvCli = fvClienteGrupo;
@@ -570,7 +573,7 @@ function computeResult(state) {
     // Acumular contribuições
     notasTempGrupo.forEach(n => {
       const chaveNota = n.parteId + (n.membroId != null ? '-' + n.membroId : '');
-      const rubrAContrib = tjClienteGrupo * n.pesoRubrA * fvCli;
+      const rubrAContrib = tjClienteGrupo * n.coefParte * fvCli;
       const coefRubrC    = n.coefParte * fvCli;
       // Rubrica C: usa o limIndiv do CLIENTE neste grupo (não da parte vencida)
       // Semântica: o cliente recupera até ao seu limite, rateado pelo decaimento de cada parte
