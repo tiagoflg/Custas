@@ -1122,6 +1122,157 @@ function onAnyInput() {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   EXPLICADOR — gera texto explicativo para casos complexos
+══════════════════════════════════════════════════════════════ */
+
+function buildExplicador(r) {
+  // Identificar factores de complexidade
+  const temMultiGrupo     = r.notasIndividuais.some(n => (n.gruposDetalhe || []).length > 1);
+  const temPluralidade    = r.nVencedores > 1;
+  const temColigacao      = r.partes.some(p => p.relacao === 'colig');
+  const temDecPorInst     = r.partes.some(p => p.decaimentoInst && Object.keys(p.decaimentoInst).length > 0);
+  const temDecCliente     = r.decCliente > 0;
+  const temLimHon         = r.limHon && r.honReais > 0;
+  const temRem            = r.estimarRem && r.somaRemEstimado > 0;
+
+  const complexo = temMultiGrupo || temPluralidade || temColigacao ||
+                   temDecPorInst || temDecCliente || temLimHon || temRem;
+  if (!complexo) return null;
+
+  const paragrafos = [];
+
+  // ── 1. Múltiplos grupos ──
+  if (temMultiGrupo) {
+    // Identificar os grupos a partir dos gruposDetalhe das notas
+    const labelsGrupos = [];
+    r.notasIndividuais.forEach(n => {
+      (n.gruposDetalhe || []).forEach(g => {
+        if (!labelsGrupos.includes(g.label)) labelsGrupos.push(g.label);
+      });
+    });
+    paragrafos.push(
+      `As instâncias e incidentes deste processo não envolvem sempre as mesmas partes. ` +
+      `Por esse motivo, o cálculo da Rubrica C é feito em separado para cada conjunto de partes: ` +
+      labelsGrupos.map((l, i) => `<strong>${l}</strong>`).join(' e ') + `. ` +
+      `Cada grupo tem o seu próprio somatório de taxas de justiça, limite global (50%) e limite individual. ` +
+      `No final, as contribuições de cada grupo são somadas em cada nota.`
+    );
+  }
+
+  // ── 2. Decaimento por instância ──
+  if (temDecPorInst) {
+    const partesComDecInst = r.partes.filter(
+      p => p.decaimentoInst && Object.keys(p.decaimentoInst).length > 0
+    );
+    const descricoes = partesComDecInst.map(p => {
+      const instIds = Object.keys(p.decaimentoInst);
+      const vals = instIds.map(id => {
+        const inst = r.instDetalhe?.find(i => String(i.id) === String(id));
+        const lbl  = inst
+          ? (TIPOS_PRINCIPAIS?.find(t => t.v === inst.tipo)?.l || inst.tipo)
+          : `instância ${id}`;
+        return `${p.decaimentoInst[id]}% na ${lbl}`;
+      });
+      return `<strong>${p.nome}</strong>: ${vals.join(', ')}`;
+    });
+    paragrafos.push(
+      `O decaimento não é uniforme em todas as instâncias: ${descricoes.join('; ')}. ` +
+      `O coeficiente aplicado em cada grupo reflecte o decaimento específico dessa instância, ` +
+      `não o decaimento global.`
+    );
+  }
+
+  // ── 3. Pluralidade de vencedores ──
+  if (temPluralidade) {
+    const vencedores = r.partesUnicas.filter(p => {
+      const fvObj = r.factoresVitoria?.find(x => x.id === p.id);
+      return fvObj ? fvObj.fv > 0 : (p.decaimento || 0) < 100;
+    });
+    const somaFVPct = fmtPct(r.somaFactoresVitoria * 100);
+    const linhasVenc = vencedores.map(p => {
+      const fv  = r.factoresVitoria?.find(x => x.id === p.id)?.fv ?? (1 - (p.decaimento || 0) / 100);
+      const lim = r.somaFactoresVitoria > 0 ? r.limGlobal * fv / r.somaFactoresVitoria : 0;
+      const isCliente = p.id === r.cliente.id;
+      return `<strong>${p.nome}</strong>${isCliente ? ' (cliente)' : ''}: factor de vitória ${fmtPct(fv * 100)} → limite individual ${fmtEuroLong(lim)}`;
+    });
+    paragrafos.push(
+      `Existem ${r.nVencedores} partes com algum vencimento, pelo que o limite global da Rubrica C ` +
+      `(${fmtEuroLong(r.limGlobal)}) é rateado proporcionalmente ao factor de vitória de cada uma, ` +
+      `nos termos do art. 32.º, n.º 2 da Portaria 419-A/2009 (soma dos factores: ${somaFVPct}):<br>` +
+      `<ul class="expl-list">${linhasVenc.map(l => `<li>${l}</li>`).join('')}</ul>`
+    );
+  }
+
+  // ── 4. Coligação — proporções ──
+  if (temColigacao) {
+    const coligacoes = r.partes.filter(p => p.relacao === 'colig');
+    coligacoes.forEach(p => {
+      if (!p.membros || p.membros.length < 2) return;
+      const totalPedidos = p.membros.reduce((s, m) => s + (m.valorPedido || 0), 0);
+      if (totalPedidos <= 0) return;
+      const linhas = p.membros.map(m => {
+        const prop = (m.valorPedido || 0) / totalPedidos;
+        return `<strong>${m.nome}</strong>: ${fmtEuroLong(m.valorPedido)} ÷ ${fmtEuroLong(totalPedidos)} = ${fmtPct(prop * 100)}`;
+      });
+      paragrafos.push(
+        `<strong>${p.nome}</strong> está em coligação. A compensação de custas é distribuída por cada membro ` +
+        `proporcionalmente ao valor do respectivo pedido (total da coligação: ${fmtEuroLong(totalPedidos)}):<br>` +
+        `<ul class="expl-list">${linhas.map(l => `<li>${l}</li>`).join('')}</ul>`
+      );
+    });
+  }
+
+  // ── 5. Remanescente estimado ──
+  if (temRem) {
+    const instComRem = r.instDetalhe?.filter(i => i.dispensaFrac > 0) || [];
+    if (instComRem.length > 0) {
+      const descRem = instComRem.map(i => {
+        const lbl = TIPOS_PRINCIPAIS?.find(t => t.v === i.tipo)?.l || i.tipo;
+        return `${lbl} (dispensa de ${fmtPct(i.dispensaFrac * 100)})`;
+      }).join(', ');
+      paragrafos.push(
+        `O remanescente foi estimado e incluído no somatório da Rubrica C. ` +
+        `Em ${descRem}, a dispensa reduz o remanescente efectivo para efeitos de cálculo.`
+      );
+    } else {
+      paragrafos.push(
+        `O remanescente foi estimado e incluído no somatório da Rubrica C. ` +
+        `O valor efectivo é calculado sobre a taxa de justiça teórica de cada parte.`
+      );
+    }
+  }
+
+  // ── 6. Limite de honorários ──
+  if (temLimHon) {
+    paragrafos.push(
+      `Os honorários reais do mandatário (${fmtEuroLong(r.honReais)}) são inferiores ao limite individual ` +
+      `bruto da Rubrica C (${fmtEuroLong(r.limIndiv + (r.rubrCLimitada ? r.somaRubrC - r.honReais : 0))}). ` +
+      `O limite da Rubrica C fica assim reduzido a ${fmtEuroLong(r.limIndiv)}, ` +
+      `e a compensação de cada nota é reescalada proporcionalmente.`
+    );
+  }
+
+  // ── 7. Cliente com decaimento ──
+  if (temDecCliente) {
+    paragrafos.push(
+      `O cliente decaiu em ${fmtPct(r.decCliente * 100)} da sua pretensão, pelo que o factor de vitória ` +
+      `(${fmtPct(r.factorCliente * 100)}) é aplicado a todas as rubricas: ` +
+      `tanto à TJ recuperável (Rubrica A) como à compensação de honorários (Rubrica C).`
+    );
+  }
+
+  // Montar HTML
+  const corpo = paragrafos.map(p => `<p class="expl-p">${p}</p>`).join('');
+  return `
+    <div class="result-section expl-section">
+      <div class="result-section-head">Como interpretar este cálculo</div>
+      <div class="result-section-body expl-body">
+        ${corpo}
+      </div>
+    </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════
    PASSO 4 — Nota final
 ══════════════════════════════════════════════════════════════ */
 
@@ -1168,6 +1319,10 @@ function renderResult() {
         <div class="rrow"><span class="d">Partes com algum vencimento (entram no rateio Rubrica C)</span><span class="v">${r.nVencedores}</span></div>
       </div>
     </div>`;
+
+  // ── Explicador ──
+  const explicador = buildExplicador(r);
+  if (explicador) html += explicador;
 
   // ── Detalhe por instância ──
   if (r.instDetalhe && r.instDetalhe.length) {

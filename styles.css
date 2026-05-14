@@ -855,6 +855,27 @@ table.ref tr:hover td { background: var(--surface-2); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Explicador de complexidade */
+.expl-section { border-left: 3px solid var(--info); background: var(--info-bg); }
+.expl-body { display: flex; flex-direction: column; gap: .6rem; }
+.expl-p {
+  font-size: .84rem;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+.expl-p strong { color: var(--text); }
+.expl-list {
+  margin: .35rem 0 .1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+.expl-list li {
+  font-size: .82rem;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
 /* Print */
 @media print {
   .topbar, .steps, .nav, .summary, .drawer, .drawer-scrim, .btn-add { display: none !important; }
