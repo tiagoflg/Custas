@@ -483,6 +483,55 @@ select {
 .nota-card-body { padding: .75rem 1rem; }
 .muted-small { font-size: .8rem; color: var(--muted); font-weight: 400; }
 
+/* Fórmulas de decomposição dentro das notas */
+.nota-formula {
+  font-size: .76rem;
+  color: var(--muted);
+  padding: .1rem 1rem .25rem 2.2rem;
+  font-family: var(--font-mono);
+}
+.nota-formula-c {
+  color: var(--accent-dim);
+}
+.nota-formula-block {
+  padding: .1rem 1rem .2rem 2.2rem;
+}
+.nota-formula-sub {
+  font-size: .75rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  padding: .05rem 0;
+}
+.nota-formula-sub.nota-formula-c { color: var(--accent-dim); }
+.nota-formula-label {
+  display: inline-block;
+  min-width: 7rem;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--faint);
+  margin-right: .4rem;
+}
+
+/* Equação final da nota */
+.nota-equacao {
+  margin-top: .6rem;
+  padding: .5rem .75rem;
+  background: var(--accent-bg-2);
+  border-left: 3px solid var(--accent-dim);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: .82rem;
+  color: var(--text-2);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .25rem;
+}
+.eq-label  { color: var(--muted); font-size: .75rem; }
+.eq-val    { font-family: var(--font-mono); font-weight: 600; }
+.eq-plus   { color: var(--muted); }
+.eq-total  { font-family: var(--font-mono); font-weight: 700; color: var(--accent); font-size: .9rem; }
+
 .rubric-badge {
   font-family: var(--font-mono); font-size: .62rem; color: var(--muted);
   background: var(--surface-2); padding: 2px 6px;

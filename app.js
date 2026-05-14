@@ -1297,25 +1297,131 @@ function renderResult() {
         <div class="result-section-body">`;
 
     r.notasIndividuais.forEach((nota, idx) => {
-      const coefPct = fmtPct(nota.coef * 100);
       const grupoInfo = nota.grupo ? ` <span class="muted-small">(${nota.grupo})</span>` : '';
-      const propInfo = nota.proporcao !== null
-        ? ` · Proporção no grupo: ${fmtPct(nota.proporcao * 100)} (pedido ${fmtEuroLong(nota.valorPedido)})` : '';
-      const factorLine = r.decCliente > 0
-        ? ` · Factor cliente: ${fmtPct(nota.factorCliente * 100)}` : '';
+
+      // ── Cabeçalho: origem do coeficiente ──
+      let coefDesc = '';
+      const gd0 = (nota.gruposDetalhe || [])[0];
+      const multiGrupoNota = (nota.gruposDetalhe || []).length > 1;
+      if (nota.relacao === 'colig' && nota.proporcao !== null) {
+        const propPct    = fmtPct(nota.proporcao * 100);
+        const pedidoInfo = nota.valorPedido ? ` · pedido ${fmtEuroLong(nota.valorPedido)}` : '';
+        if (multiGrupoNota) {
+          // dec varia por instância — mostrar só proporção no cabeçalho; detalhe nas linhas abaixo
+          coefDesc = `Proporção ${propPct}${pedidoInfo} · decaimento por instância (ver decomposição)`;
+        } else {
+          const decParte = gd0 ? gd0.coefParte / nota.proporcao : nota.coefParte / nota.proporcao;
+          coefDesc = `Decaimento ${fmtPct(decParte * 100)} × proporção ${propPct}${pedidoInfo}`;
+          if (r.decCliente > 0) coefDesc += ` × factor cliente ${fmtPct(nota.factorCliente * 100)}`;
+        }
+      } else {
+        // autónoma
+        if (multiGrupoNota) {
+          coefDesc = `Decaimento por instância (ver decomposição)`;
+        } else {
+          coefDesc = `Decaimento ${fmtPct(nota.coefParte * 100)}`;
+          if (r.decCliente > 0) coefDesc += ` × factor cliente ${fmtPct(nota.factorCliente * 100)}`;
+        }
+      }
+
+      // ── Decomposição Rubrica A ──
+      let htmlRubrA = '';
+      const gd = nota.gruposDetalhe || [];
+      if (gd.length === 1) {
+        // caso simples: 1 grupo → equação numa linha
+        const g = gd[0];
+        const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+        htmlRubrA = `
+          <div class="rrow">
+            <span class="d"><span class="rubric-badge">A</span>TJ do cliente × coeficiente</span>
+            <span class="v">${fmtEuroLong(nota.rubrA)}</span>
+          </div>
+          <div class="nota-formula">${formula} = ${fmtEuroLong(nota.rubrA)}</div>`;
+      } else {
+        // múltiplos grupos → linha por grupo + subtotal
+        const linhas = gd.map(g => {
+          const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+          return `<div class="nota-formula-sub"><span class="nota-formula-label">${g.label}</span>${formula} = ${fmtEuroLong(g.rubrA)}</div>`;
+        }).join('');
+        htmlRubrA = `
+          <div class="rrow">
+            <span class="d"><span class="rubric-badge">A</span>TJ do cliente × coeficiente</span>
+            <span class="v">${fmtEuroLong(nota.rubrA)}</span>
+          </div>
+          <div class="nota-formula-block">${linhas}</div>`;
+      }
+
+      // ── Decomposição Rubrica B ──
+      let htmlRubrB = '';
+      if (nota.rubrB > 0) {
+        htmlRubrB = `
+          <div class="rrow">
+            <span class="d"><span class="rubric-badge">B</span>Encargos × coeficiente</span>
+            <span class="v">${fmtEuroLong(nota.rubrB)}</span>
+          </div>`;
+      }
+
+      // ── Decomposição Rubrica C ──
+      let htmlRubrC = '';
+      if (gd.length === 1) {
+        const g = gd[0];
+        // Mostrar equação: limIndiv × dec × prop [× fvCli]
+        // limIndiv = limGlobal × fvCli / somaFV
+        let formulaLimIndiv = '';
+        if (g.somaFV > 1.001) {
+          // pluralidade: mostrar como limGlobal × fvCli / somaFV
+          formulaLimIndiv = `${fmtEuroLong(g.limGlobal)} × ${fmtPct(g.fvClienteGrupo * 100)} ÷ ${fmtPct(g.somaFV * 100)} = ${fmtEuroLong(g.limIndivCliente)}`;
+        } else {
+          formulaLimIndiv = `limite = ${fmtEuroLong(g.limIndivCliente)}`;
+        }
+        const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+        htmlRubrC = `
+          <div class="rrow">
+            <span class="d"><span class="rubric-badge">C</span>Compensação honorários</span>
+            <span class="v">${fmtEuroLong(nota.rubrC)}</span>
+          </div>
+          <div class="nota-formula nota-formula-c">Lim. individual: ${formulaLimIndiv}</div>
+          <div class="nota-formula nota-formula-c">${formulaC} = ${fmtEuroLong(nota.rubrC)}</div>`;
+      } else {
+        const linhas = gd.map(g => {
+          let formulaLimIndiv = g.somaFV > 1.001
+            ? `${fmtEuroLong(g.limGlobal)} × ${fmtPct(g.fvClienteGrupo * 100)} ÷ ${fmtPct(g.somaFV * 100)} = ${fmtEuroLong(g.limIndivCliente)}`
+            : `limite = ${fmtEuroLong(g.limIndivCliente)}`;
+          const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+          return `<div class="nota-formula-sub nota-formula-c"><span class="nota-formula-label">${g.label}</span>${formulaLimIndiv} → ${formulaC} = ${fmtEuroLong(g.rubrC)}</div>`;
+        }).join('');
+        htmlRubrC = `
+          <div class="rrow">
+            <span class="d"><span class="rubric-badge">C</span>Compensação honorários</span>
+            <span class="v">${fmtEuroLong(nota.rubrC)}</span>
+          </div>
+          <div class="nota-formula-block nota-formula-c">${linhas}</div>`;
+      }
+
+      // ── Equação final da nota ──
+      const parcelasEq = [
+        `<span class="eq-val">${fmtEuroLong(nota.rubrA)}</span> <span class="eq-label">(A)</span>`,
+        nota.rubrB > 0 ? `<span class="eq-val">${fmtEuroLong(nota.rubrB)}</span> <span class="eq-label">(B)</span>` : null,
+        `<span class="eq-val">${fmtEuroLong(nota.rubrC)}</span> <span class="eq-label">(C)</span>`,
+      ].filter(Boolean).join(' <span class="eq-plus">+</span> ');
+      const htmlEquacao = `
+        <div class="nota-equacao">
+          <span class="eq-label">Nota =</span> ${parcelasEq} <span class="eq-plus">=</span> <span class="eq-total">${fmtEuroLong(nota.total)}</span>
+        </div>`;
 
       html += `
         <div class="nota-card">
           <div class="nota-card-head">
             <span class="nota-num">#${idx + 1}</span>
             <span class="nota-nome">${nota.nome}${grupoInfo}</span>
-            <span class="nota-coef">Coeficiente: ${coefPct}${propInfo}${factorLine}</span>
+            <span class="nota-coef">${coefDesc}</span>
           </div>
           <div class="nota-card-body">
-            <div class="rrow"><span class="d"><span class="rubric-badge">A</span>TJ do cliente × coeficiente</span><span class="v">${fmtEuroLong(nota.rubrA)}</span></div>
-            ${nota.rubrB > 0 ? `<div class="rrow"><span class="d"><span class="rubric-badge">B</span>Encargos × coeficiente</span><span class="v">${fmtEuroLong(nota.rubrB)}</span></div>` : ''}
-            <div class="rrow"><span class="d"><span class="rubric-badge">C</span>Compensação honorários × coeficiente</span><span class="v">${fmtEuroLong(nota.rubrC)}</span></div>
+            ${htmlRubrA}
+            ${htmlRubrB}
+            ${htmlRubrC}
             <div class="rrow rrow-total"><span class="d">Total desta nota</span><span class="v">${fmtEuroLong(nota.total)}</span></div>
+            ${htmlEquacao}
           </div>
         </div>`;
     });

@@ -570,13 +570,18 @@ function computeResult(state) {
     // Calcular fvCliente neste grupo para rubrC
     const fvCli = fvClienteGrupo;
 
+    // Rótulo do grupo para display (nomes das instâncias)
+    const labelGrupo = instsGrupo.map(i => {
+      const tl = { '1inst':'1.ª Instância','apelacao':'Apelação','revista':'Revista/STJ','tc':'TC','tab2':'Tab. II' };
+      return tl[i.tipo] || i.tipo;
+    }).join(' + ');
+
     // Acumular contribuições
     notasTempGrupo.forEach(n => {
       const chaveNota = n.parteId + (n.membroId != null ? '-' + n.membroId : '');
       const rubrAContrib = tjClienteGrupo * n.coefParte * fvCli;
       const coefRubrC    = n.coefParte * fvCli;
       // Rubrica C: usa o limIndiv do CLIENTE neste grupo (não da parte vencida)
-      // Semântica: o cliente recupera até ao seu limite, rateado pelo decaimento de cada parte
       const rubrCContrib = limIndivClienteGrupo * coefRubrC;
 
       if (!contrib.has(chaveNota)) {
@@ -585,16 +590,31 @@ function computeResult(state) {
           nome: n.nome, grupo: n.grupo, relacao: n.relacao,
           proporcao: n.proporcao, valorPedido: n.valorPedido,
           totalPedidosGrupo: n.totalPedidosGrupo,
-          coefParte: n.coefParte, // decaimento global da parte
+          coefParte: n.coefParte,
           rubrA: 0, rubrC: 0,
           factorCliente: fvCli,
           nVencidosTotal: nVencidosGrupo,
+          // Detalhes por grupo para decomposição na UI
+          gruposDetalhe: [],
         });
       }
       const c = contrib.get(chaveNota);
       c.rubrA += rubrAContrib;
       c.rubrC += rubrCContrib;
-      // factorCliente e nVencidosTotal do maior grupo (informativo)
+      // Guardar detalhe deste grupo para exibição da decomposição
+      c.gruposDetalhe.push({
+        label: labelGrupo,
+        tjCliente: tjClienteGrupo,
+        coefParte: n.coefParte,
+        fvCliente: fvCli,
+        rubrA: rubrAContrib,
+        limIndivCliente: limIndivClienteGrupo,
+        coefRubrC,
+        rubrC: rubrCContrib,
+        somaFV: somaFVGrupo,
+        fvClienteGrupo: fvCli,
+        limGlobal: limGlobalGrupo,
+      });
     });
   }); // fim forEach grupos
 
@@ -704,6 +724,7 @@ function computeResult(state) {
       rubrB: rubrBNota,
       rubrC: c.rubrC,
       total: c.rubrA + rubrBNota + c.rubrC,
+      gruposDetalhe: c.gruposDetalhe || [],
     });
   });
 
