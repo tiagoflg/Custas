@@ -1161,23 +1161,42 @@ function buildExplicador(r) {
 
   // ── 2. Decaimento por instância ──
   if (temDecPorInst) {
+    // Construir mapa id → label a partir das instâncias conhecidas (S.inst e r.instDetalhe)
+    const instLabelMap = {};
+    (r.insts || []).forEach(inst => {
+      const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+      instLabelMap[String(inst.id)] = lbl;
+    });
+    (r.instDetalhe || []).forEach(inst => {
+      if (!instLabelMap[String(inst.id)]) {
+        const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+        instLabelMap[String(inst.id)] = lbl;
+      }
+    });
+
     const partesComDecInst = r.partes.filter(
       p => p.decaimentoInst && Object.keys(p.decaimentoInst).length > 0
     );
-    const descricoes = partesComDecInst.map(p => {
+    // Também incluir o cliente se tiver decaimento por instância
+    const todasComDec = [...partesComDecInst];
+    if (r.cliente?.decaimentoInst && Object.keys(r.cliente.decaimentoInst).length > 0 &&
+        !todasComDec.find(p => p.id === r.cliente.id)) {
+      todasComDec.unshift(r.cliente);
+    }
+
+    const linhasDec = todasComDec.map(p => {
       const instIds = Object.keys(p.decaimentoInst);
       const vals = instIds.map(id => {
-        const inst = r.instDetalhe?.find(i => String(i.id) === String(id));
-        const lbl  = inst
-          ? (TIPOS_PRINCIPAIS?.find(t => t.v === inst.tipo)?.l || inst.tipo)
-          : `instância ${id}`;
-        return `${p.decaimentoInst[id]}% na ${lbl}`;
+        const lbl = instLabelMap[String(id)] || `instância ${id}`;
+        const dec = p.decaimentoInst[id];
+        return `${dec}% na ${lbl}`;
       });
       return `<strong>${p.nome}</strong>: ${vals.join(', ')}`;
     });
     paragrafos.push(
-      `O decaimento não é uniforme em todas as instâncias: ${descricoes.join('; ')}. ` +
-      `O coeficiente aplicado em cada grupo reflecte o decaimento específico dessa instância, ` +
+      `O decaimento varia consoante a instância. Para este processo:<br>` +
+      `<ul class="expl-list">${linhasDec.map(l => `<li>${l}</li>`).join('')}</ul>` +
+      `O coeficiente aplicado em cada grupo de instâncias reflecte o decaimento específico configurado, ` +
       `não o decaimento global.`
     );
   }
@@ -1191,14 +1210,17 @@ function buildExplicador(r) {
     const somaFVPct = fmtPct(r.somaFactoresVitoria * 100);
     const linhasVenc = vencedores.map(p => {
       const fv  = r.factoresVitoria?.find(x => x.id === p.id)?.fv ?? (1 - (p.decaimento || 0) / 100);
+      const dec = (1 - fv) * 100;
       const lim = r.somaFactoresVitoria > 0 ? r.limGlobal * fv / r.somaFactoresVitoria : 0;
       const isCliente = p.id === r.cliente.id;
-      return `<strong>${p.nome}</strong>${isCliente ? ' (cliente)' : ''}: factor de vitória ${fmtPct(fv * 100)} → limite individual ${fmtEuroLong(lim)}`;
+      const decLabel = dec === 0 ? 'decaimento 0%' : `decaimento ${fmtPct(dec)}`;
+      return `<strong>${p.nome}</strong>${isCliente ? ' (cliente)' : ''}: ${decLabel} → factor de vitória ${fmtPct(fv * 100)} → limite individual ${fmtEuroLong(lim)}`;
     });
     paragrafos.push(
-      `Existem ${r.nVencedores} partes com algum vencimento, pelo que o limite global da Rubrica C ` +
-      `(${fmtEuroLong(r.limGlobal)}) é rateado proporcionalmente ao factor de vitória de cada uma, ` +
-      `nos termos do art. 32.º, n.º 2 da Portaria 419-A/2009 (soma dos factores: ${somaFVPct}):<br>` +
+      `Existem ${r.nVencedores} partes com algum vencimento neste processo. O limite global da Rubrica C ` +
+      `(${fmtEuroLong(r.limGlobal)}) é rateado proporcionalmente ao factor de vitória de cada uma ` +
+      `(= 100% − decaimento), nos termos do art. 32.º, n.º 2 da Portaria 419-A/2009 ` +
+      `(soma dos factores de vitória: ${somaFVPct}):<br>` +
       `<ul class="expl-list">${linhasVenc.map(l => `<li>${l}</li>`).join('')}</ul>`
     );
   }
