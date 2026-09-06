@@ -855,20 +855,39 @@ table.ref tr:hover td { background: var(--surface-2); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Explicador de complexidade */
+/* Explicador de complexidade (colapsável) */
 .expl-section { border-left: 3px solid var(--info); background: var(--info-bg); }
-.expl-body { display: flex; flex-direction: column; gap: .6rem; }
+.expl-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.expl-summary::-webkit-details-marker { display: none; }
+.expl-summary::after {
+  content: '›';
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-block;
+  transition: transform .2s ease;
+}
+details[open] .expl-summary::after {
+  transform: rotate(90deg);
+}
+details:not([open]) .expl-summary {
+  border-bottom: none;
+}
+.expl-body { display: flex; flex-direction: column; gap: .8rem; padding-top: .85rem; }
 .expl-p {
   font-size: .84rem;
   color: var(--text-2);
-  line-height: 1.55;
+  line-height: 1.6;
 }
 .expl-p strong { color: var(--text); }
 .expl-list {
-  margin: .35rem 0 .1rem 1.2rem;
+  margin: .4rem 0 .1rem 1.2rem;
   display: flex;
   flex-direction: column;
-  gap: .2rem;
+  gap: .25rem;
 }
 .expl-list li {
   font-size: .82rem;
