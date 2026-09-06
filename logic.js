@@ -572,7 +572,18 @@ function computeResult(state) {
 
     // Rótulo do grupo para display (nomes das instâncias)
     const labelGrupo = instsGrupo.map(i => {
-      const tl = { '1inst':'1.ª Instância','apelacao':'Apelação','revista':'Revista/STJ','tc':'TC','tab2':'Tab. II' };
+      const tl = {
+        '1inst':    '1.ª Instância',
+        'apelacao': 'Apelação',
+        'revista':  'Revista/STJ',
+        'tc':       'Trib. Constitucional',
+        'caut':     'Cautelar (Tab. II)',
+        'exec':     'Execução (Tab. II)',
+        'inj':      'Injunção (Tab. II)',
+        'recred':   'Recl. créditos (Tab. II)',
+        'incidente':'Incidente (Tab. II)',
+        'outro2':   'Outro (Tab. II)',
+      };
       return tl[i.tipo] || i.tipo;
     }).join(' + ');
 
