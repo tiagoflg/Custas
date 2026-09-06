@@ -1174,25 +1174,46 @@ function buildExplicador(r) {
   }
   paragrafos.push(p1);
 
-  // ── § 2: Decaimentos e o que implicam para o rateio ──
-  // Adversários com decaimento parcial (> 0 e < 100) — são também vencedores parciais
-  const adversariosComDecParcial = r.partes.filter(p => {
+  // ── § 2: Partes vencidas parcialmente e o que implicam para o rateio ──
+  const partesVencidasParcial = r.partes.filter(p => {
     const dec = getDec(p);
     return dec > 0 && dec < 100;
   });
-  if (adversariosComDecParcial.length > 0) {
-    const linhasDec = adversariosComDecParcial.map(p =>
-      `<strong>${p.nome}</strong> (${fmtPct(getDec(p))})`
-    );
-    const plural = adversariosComDecParcial.length > 1;
-    paragrafos.push(
-      `Nesta ação, nem todos os adversários saíram totalmente derrotados: ` +
-      `${joinPt(linhasDec)} decai${plural ? 'u' : 'u'}${plural ? 'ram' : ''} parcialmente. ` +
-      `${plural ? 'Estas partes têm' : 'Esta parte tem'} algum vencimento e, por isso, ` +
-      `${plural ? 'entram' : 'entra'} no rateio da compensação de honorários (Rubrica C) ` +
-      `a par das restantes partes vencedoras.`
-    );
+  if (partesVencidasParcial.length > 0) {
+    // Calcular soma dos graus de vencimento das partes parcialmente vencidas
+    const somaFvParciais = partesVencidasParcial.reduce((s, p) => s + getFV(p), 0);
+    const somaEhInteiro  = Math.abs(somaFvParciais - Math.round(somaFvParciais)) < 0.001;
+    const plural = partesVencidasParcial.length > 1;
+
+    // Descrever cada parte com o seu grau de vencimento
+    const descParciais = partesVencidasParcial.map(p => {
+      const dec = fmtPct(getDec(p));
+      const ven = fmtPct(getFV(p) * 100);
+      return `<strong>${p.nome}</strong> — vencida em ${dec}, vencedora nos restantes <strong>${ven}</strong>`;
+    });
+
+    let txt = `Para efeitos do art. 32.º, n.º 2 da Portaria, o limite global é dividido pelas ` +
+      `<strong>partes vencedoras</strong> — incluindo as que o foram apenas parcialmente. ` +
+      `Nesta ação, ${plural ? 'há partes vencidas apenas em parte' : 'há uma parte vencida apenas em parte'}:<br>` +
+      `<ul class="expl-list">${descParciais.map(l => `<li>${l}</li>`).join('')}</ul>`;
+
+    // Se a soma dos factores de vitória das parciais for (aproximadamente) um inteiro,
+    // explicar que juntas equivalem a N partes vencedoras completas
+    if (somaEhInteiro && somaFvParciais >= 0.99) {
+      const nEq = Math.round(somaFvParciais);
+      const nPartes = Math.round(r.somaFactoresVitoria);
+      if (nEq === 1) {
+        txt += `Os graus de vencimento destas partes somam <strong>${partesVencidasParcial.map(p => fmtPct(getFV(p)*100)).join(' + ')} = 100%</strong> — ` +
+          `o equivalente a uma parte vencedora completa. O limite global divide-se assim por ` +
+          `<strong>${nPartes} partes</strong>, ${plural ? 'sendo que estas partilham entre si o mesmo quinto que caberia a uma parte vencedora total' : ''}.`;
+      } else {
+        txt += `Os graus de vencimento destas partes somam ${nEq * 100}% — o equivalente a ${nEq} partes vencedoras completas. ` +
+          `O limite global divide-se por <strong>${nPartes} partes</strong>.`;
+      }
+    }
+    paragrafos.push(txt);
   }
+
   // Decaimento do cliente — consequências
   if (temDecCliente) {
     paragrafos.push(
@@ -1204,25 +1225,67 @@ function buildExplicador(r) {
 
   // ── § 3: Rateio da Rubrica C (se pluralidade) ──
   if (temPluralidade) {
-    const vencedores = r.partesUnicas.filter(p => getFV(p) > 0);
-    const linhasVenc = vencedores.map(p => {
-      const fv  = getFV(p);
-      const dec = getDec(p);
-      const lim = r.somaFactoresVitoria > 0 ? r.limGlobal * fv / r.somaFactoresVitoria : 0;
-      const suf = p.id === r.cliente.id ? ' (cliente)' : '';
-      if (dec === 0)
-        return `<strong>${p.nome}</strong>${suf}: vencimento total → limite individual ${fmtEuroLong(lim)}`;
-      return `<strong>${p.nome}</strong>${suf}: vencimento de ${fmtPct(fv * 100)} → limite individual ${fmtEuroLong(lim)}`;
-    });
-    const notaDec = temDecPorInst
-      ? ` Para as partes com decaimento variável por instância, o grau de vitória resulta de uma média ponderada pelas taxas pagas em cada fase.`
-      : '';
-    paragrafos.push(
-      `O limite global da Rubrica C — <strong>${fmtEuroLong(r.limGlobal)}</strong> — ` +
-      `é dividido pelas <strong>${r.nVencedores} partes vencedoras</strong> em proporção ` +
-      `ao grau de vitória de cada uma (art. 32.º, n.º 2 da Portaria 419-A/2009).${notaDec}<br>` +
-      `<ul class="expl-list">${linhasVenc.map(l => `<li>${l}</li>`).join('')}</ul>`
-    );
+    const nPartes = Math.round(r.somaFactoresVitoria);
+    const somaEhInteiro = Math.abs(r.somaFactoresVitoria - nPartes) < 0.001;
+
+    // Separar partes com vencimento total das parciais
+    const vencedorasTotal   = r.partesUnicas.filter(p => getFV(p) >= 0.9999);
+    const vencedorasParcial = r.partesUnicas.filter(p => getFV(p) > 0 && getFV(p) < 0.9999);
+
+    const limPorQuinto = somaEhInteiro && nPartes > 0 ? r.limGlobal / nPartes : null;
+
+    let linhasVenc;
+    if (somaEhInteiro && limPorQuinto && vencedorasParcial.length > 0) {
+      // Partes com vencimento total: cada uma tem 1 quinto
+      const linhasTotais = vencedorasTotal.map(p => {
+        const suf = p.id === r.cliente.id ? ' (cliente)' : '';
+        const lim = r.limGlobal * getFV(p) / r.somaFactoresVitoria;
+        return `<strong>${p.nome}</strong>${suf}: 1/${nPartes} → ${fmtEuroLong(lim)}`;
+      });
+      // Partes parciais: partilham quinto(s)
+      const somaFvParciais = vencedorasParcial.reduce((s, p) => s + getFV(p), 0);
+      const nQuintosParciais = Math.round(somaFvParciais);
+      const limParcialTotal = limPorQuinto * nQuintosParciais;
+      const linhasParciais = vencedorasParcial.map(p => {
+        const fv  = getFV(p);
+        const lim = r.limGlobal * fv / r.somaFactoresVitoria;
+        const pct = fmtPct(fv * 100);
+        return `<strong>${p.nome}</strong>: ${pct} de ${nQuintosParciais === 1 ? '1/' + nPartes : nQuintosParciais + '/' + nPartes} → ${fmtEuroLong(lim)}`;
+      });
+      const notaDec = temDecPorInst
+        ? ` Para as partes com decaimento variável por instância, o grau de vitória resulta de uma média ponderada pelas taxas pagas em cada fase.`
+        : '';
+      linhasVenc = [...linhasTotais, ...linhasParciais];
+      paragrafos.push(
+        `O limite global de <strong>${fmtEuroLong(r.limGlobal)}</strong> divide-se em ` +
+        `<strong>${nPartes} partes iguais</strong> de ${fmtEuroLong(limPorQuinto)} cada.${notaDec} ` +
+        `${vencedorasParcial.length > 1 ? 'As partes parcialmente vencidas partilham' : 'A parte parcialmente vencida recebe'} ` +
+        `${nQuintosParciais === 1 ? 'um desses quintos' : nQuintosParciais + ' desses quintos'} ` +
+        `(${fmtEuroLong(limParcialTotal)}), internamente repartido${vencedorasParcial.length > 1 ? 's' : ''} em proporção ao vencimento de cada uma:<br>` +
+        `<ul class="expl-list">${linhasVenc.map(l => `<li>${l}</li>`).join('')}</ul>`
+      );
+    } else {
+      // Fallback genérico
+      const vencedores = r.partesUnicas.filter(p => getFV(p) > 0);
+      const linhas = vencedores.map(p => {
+        const fv  = getFV(p);
+        const dec = getDec(p);
+        const lim = r.somaFactoresVitoria > 0 ? r.limGlobal * fv / r.somaFactoresVitoria : 0;
+        const suf = p.id === r.cliente.id ? ' (cliente)' : '';
+        if (dec === 0)
+          return `<strong>${p.nome}</strong>${suf}: vencimento total → ${fmtEuroLong(lim)}`;
+        return `<strong>${p.nome}</strong>${suf}: vencimento de ${fmtPct(fv * 100)} → ${fmtEuroLong(lim)}`;
+      });
+      const notaDec = temDecPorInst
+        ? ` Para as partes com decaimento variável por instância, o grau de vitória resulta de uma média ponderada pelas taxas pagas em cada fase.`
+        : '';
+      paragrafos.push(
+        `O limite global da Rubrica C — <strong>${fmtEuroLong(r.limGlobal)}</strong> — ` +
+        `é dividido em proporção ao grau de vencimento de cada parte vencedora ` +
+        `(art. 32.º, n.º 2 da Portaria 419-A/2009).${notaDec}<br>` +
+        `<ul class="expl-list">${linhas.map(l => `<li>${l}</li>`).join('')}</ul>`
+      );
+    }
   }
 
   // ── § 4: Coligação — repartição interna ──
