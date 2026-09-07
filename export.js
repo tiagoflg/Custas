@@ -331,8 +331,8 @@ function tRowData(col1, col2, col3, opts = {}) {
 }
 
 /* linha de subtotal (itálico + cinzento) — mesmas bordas de dados normais */
-function tRowSubtotal(label, valor, topSz = 4) {
-  const rXml = run(label, { italic: true, color: '808080' });
+function tRowSubtotal(label, valor, topSz = 4, fnXml = '') {
+  const rXml = run(label, { italic: true, color: '808080' }) + fnXml;
   const vXml = run(valor, { italic: true, color: '808080' });
   return `<w:tr>`
     + tCell(rXml, TC1, 'center', brdC1(topSz, 4))
@@ -527,7 +527,10 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraTituloSec('Identificação da compensação da parte vencedora face às despesas com honorários do mandatário judicial'));
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. d), e 26.º, n.º 3, al. c), do RCP'));
 
-  const fnRubrC = addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.');
+  const fnRubrC    = addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.');
+  const fnPortaria = addFnTexto('Nos termos e para os efeitos do disposto no artigo 32.º, n.º 2, da Portaria n.º 419-A/2009, de 17 de abril.');
+  const pctDecNota = fmtPctDoc(nota.coefParte * 100);
+  const fnDecIII   = addFnTexto('Considerando o coeficiente de decaimento de ' + pctDecNota + '.');
 
   // Somatório TJ de todas as partes = limGlobal × 2 (limGlobal já é 50% do total)
   const somaTodasTJ   = r.limGlobal * 2;
@@ -536,23 +539,23 @@ function gerarDocumentXml(r, st, nota) {
   const nEfectivo     = r.somaFactoresVitoria;
   const nEfectivoInt  = Math.abs(nEfectivo - Math.round(nEfectivo)) < 0.001;
   const limPorParte   = nEfectivo > 0 ? limGlobal50 / nEfectivo : limGlobal50;
-  // Fase a mostrar na linha do somatório
+  // Fase a mostrar na linha do somatório e na Secção IV
   const faseRubrC = r.instDetalhe?.length === 1
     ? (TIPOS_PRINCIPAIS.find(t => t.v === r.instDetalhe[0].tipo)?.l || r.instDetalhe[0].tipo)
     : 'Todas as instâncias';
 
   const rowsRubrC = [tRowHead()];
-  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes') + fnRubrC, faseRubrC, fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
-  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4));
+  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes'), faseRubrC, fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
+  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4, fnRubrC));
   // Mostrar divisão pelo nº efectivo de partes se houver rateio (somaFactoresVitoria ≠ 1)
   if (nEfectivoInt && Math.round(nEfectivo) > 1) {
     const nInt = Math.round(nEfectivo);
-    rowsRubrC.push(tRowSubtotal('Subtotal (50%/' + nInt + ')', fmtEuroDoc(limPorParte), 4));
+    rowsRubrC.push(tRowSubtotal('Subtotal (50%/' + nInt + ')', fmtEuroDoc(limPorParte), 4, fnPortaria));
   } else if (!nEfectivoInt || nEfectivo > 1) {
     // caso não-inteiro: mostrar igual
-    rowsRubrC.push(tRowSubtotal('Limite individual', fmtEuroDoc(limPorParte), 4));
+    rowsRubrC.push(tRowSubtotal('Limite individual', fmtEuroDoc(limPorParte), 4, fnPortaria));
   }
-  rowsRubrC.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 0, isTotal: true }));
+  rowsRubrC.push(tRowData(run('Total', { bold: true }) + fnDecIII, '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 0, isTotal: true }));
 
   paras.push(paraEsp(80));
   paras.push(mkTable(rowsRubrC));
@@ -562,25 +565,15 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraTituloSec('Identificação do valor a receber a título de custas de parte'));
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. e), e 26.º do RCP'));
 
-  // Footnote Rubrica A — critério único: proporcional ao decaimento individual
-  const tjCliTotal = r.tjBasePagaCliente;
-  const pctDecNota = fmtPctDoc(nota.coefParte * 100);
-  const somaDecFn = r.notasIndividuais.reduce((s, n) => s + n.coefParte, 0);
-  const somaDecLabel = fmtPctDoc(somaDecFn * 100);
-  const textoFnA = 'Correspondente a ' + fmtFracao(nota.pesoRubrA)
-    + ' da taxa de justiça efetivamente liquidada pela parte vencedora'
-    + ' – EUR ' + tjCliTotal.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' –,'
-    + ' calculada proporcionalmente ao decaimento individual de ' + nomeVencido
-    + ' (' + pctDecNota + ') face à soma dos decaimentos de todos os vencidos (' + somaDecLabel + '),'
-    + ' para que, desta forma, a parte vencedora não obtenha qualquer enriquecimento face ao montante efetivamente pago.'
-    + (r.encargos?.length > 0 ? ' O mesmo critério foi aplicado aos encargos (Rubrica B).' : '');
+  // Footnote Rubrica A — coeficiente de decaimento individual
+  const textoFnA = 'Considerando o coeficiente de decaimento de ' + pctDecNota + '.';
   const fnA = addFnTexto(textoFnA);
 
   const decLabel = nota.coefParte * 100 === 100 ? 'Total' : fmtPctDoc(nota.coefParte * 100);
 
   paras.push(paraEsp(80));
   const rowsIV = [tRowHead()];
-  rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + fnA, '', fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
+  rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + fnA, faseRubrC, fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
   if (nota.rubrB > 0) rowsIV.push(tRowData('Encargos', '', fmtEuroDoc(nota.rubrB), { topSz: 4, botSz: 4 }));
   rowsIV.push(tRowData('Compensação de honorários', '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
   rowsIV.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.total), { topSz: 4, botSz: 0, isTotal: true }));
@@ -601,7 +594,7 @@ function gerarDocumentXml(r, st, nota) {
     run('Nota Discriminativa e Justificativa de Custas de Parte', { bold: true }),
     run(' e aos cálculos elaborados e melhor discriminados '),
     run('supra', { italic: true }),
-    run(', deverá ' + nomeVencido + ' proceder à liquidação à minha Constituinte ' + nomeVencedor + ' da quantia total de '),
+    run(', deverá a ' + nomeVencido + ' proceder à liquidação à minha Constituinte ' + nomeVencedor + ' da quantia total de '),
     run(fmtEuroDoc(nota.total), { bold: true, underline: true }),
     run(', mediante transferência bancária para o IBAN n.º '),
     runHighlight('[indicar]'),
