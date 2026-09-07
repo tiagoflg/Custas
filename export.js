@@ -436,6 +436,7 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraAlinea('Identificação do processo'));
   paras.push(paraItem('Tribunal', tribunal));
   paras.push(paraItem('Processo', numProcesso));
+  if (st.valorAcao > 0) paras.push(paraItem('Valor da ação', fmtEuroDoc(st.valorAcao)));
   paras.push(paraEsp(80));
   paras.push(paraAlinea('Identificação dos mandatários'));
   paras.push(paraItemHL('Parte vencedora'));
@@ -484,8 +485,8 @@ function gerarDocumentXml(r, st, nota) {
       totalEncVenc += enc.val;
     });
   }
-  rowsVenc.push(tRowSubtotal('Total Taxas',    fmtEuroDoc(totalTJVenc),  nextTopVenc));
-  rowsVenc.push(tRowSubtotal('Total Encargos', fmtEuroDoc(totalEncVenc), 4));
+  rowsVenc.push(tRowSubtotal('Total Taxas', fmtEuroDoc(totalTJVenc), nextTopVenc));
+  if (totalEncVenc > 0) rowsVenc.push(tRowSubtotal('Total Encargos', fmtEuroDoc(totalEncVenc), 4));
 
   paras.push(paraAlinea('Pelas partes vencedoras', true));
   paras.push(paraEsp(80));
@@ -526,17 +527,35 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraTituloSec('Identificação da compensação da parte vencedora face às despesas com honorários do mandatário judicial'));
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. d), e 26.º, n.º 3, al. c), do RCP'));
 
-  const tjVencBase = r.tjBasePagaCliente;
-  const limComp    = (tjVencBase + totalTJVd) * 0.5;
-  const fnRubrC    = addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.');
+  const fnRubrC = addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.');
+
+  // Somatório TJ de todas as partes = limGlobal × 2 (limGlobal já é 50% do total)
+  const somaTodasTJ   = r.limGlobal * 2;
+  const limGlobal50   = r.limGlobal;  // 50% do somatório
+  // Número efectivo de partes vencedoras (soma dos factores de vitória)
+  const nEfectivo     = r.somaFactoresVitoria;
+  const nEfectivoInt  = Math.abs(nEfectivo - Math.round(nEfectivo)) < 0.001;
+  const limPorParte   = nEfectivo > 0 ? limGlobal50 / nEfectivo : limGlobal50;
+  // Fase a mostrar na linha do somatório
+  const faseRubrC = r.instDetalhe?.length === 1
+    ? (TIPOS_PRINCIPAIS.find(t => t.v === r.instDetalhe[0].tipo)?.l || r.instDetalhe[0].tipo)
+    : 'Todas as instâncias';
+
+  const rowsRubrC = [tRowHead()];
+  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes') + fnRubrC, faseRubrC, fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
+  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4));
+  // Mostrar divisão pelo nº efectivo de partes se houver rateio (somaFactoresVitoria ≠ 1)
+  if (nEfectivoInt && Math.round(nEfectivo) > 1) {
+    const nInt = Math.round(nEfectivo);
+    rowsRubrC.push(tRowSubtotal('Subtotal (50%/' + nInt + ')', fmtEuroDoc(limPorParte), 4));
+  } else if (!nEfectivoInt || nEfectivo > 1) {
+    // caso não-inteiro: mostrar igual
+    rowsRubrC.push(tRowSubtotal('Limite individual', fmtEuroDoc(limPorParte), 4));
+  }
+  rowsRubrC.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 0, isTotal: true }));
 
   paras.push(paraEsp(80));
-  paras.push(mkTable([
-    tRowHead(),
-    tRowData('Taxas de Justiça — Parte Vencedora', 'Total', fmtEuroDoc(tjVencBase), { topSz: 4, botSz: 4 }),
-    tRowData('Taxas de Justiça — Parte Vencida',   'Total', fmtEuroDoc(totalTJVd),  { topSz: 4, botSz: 4 }),
-    tRowData(run('Total (50%)') + fnRubrC, '', fmtEuroDoc(limComp), { topSz: 4, botSz: 0, isTotal: true }),
-  ]));
+  paras.push(mkTable(rowsRubrC));
   paras.push(paraEsp(160));
 
   /* ── SECÇÃO IV ── */
@@ -561,10 +580,10 @@ function gerarDocumentXml(r, st, nota) {
 
   paras.push(paraEsp(80));
   const rowsIV = [tRowHead()];
-  rowsIV.push(tRowData(run('Taxa de Justiça (Rubrica A)') + fnA, '', fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
-  if (nota.rubrB > 0) rowsIV.push(tRowData('Encargos (Rubrica B)', '', fmtEuroDoc(nota.rubrB), { topSz: 4, botSz: 4 }));
-  rowsIV.push(tRowData('Compensação de honorários (Rubrica C)', '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
-  rowsIV.push(tRowData(run('Total (' + decLabel + ')', { bold: true }), '', fmtEuroDoc(nota.total), { topSz: 4, botSz: 0, isTotal: true }));
+  rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + fnA, '', fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
+  if (nota.rubrB > 0) rowsIV.push(tRowData('Encargos', '', fmtEuroDoc(nota.rubrB), { topSz: 4, botSz: 4 }));
+  rowsIV.push(tRowData('Compensação de honorários', '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
+  rowsIV.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.total), { topSz: 4, botSz: 0, isTotal: true }));
   paras.push(mkTable(rowsIV));
   paras.push(paraEsp(240));
 
@@ -582,7 +601,7 @@ function gerarDocumentXml(r, st, nota) {
     run('Nota Discriminativa e Justificativa de Custas de Parte', { bold: true }),
     run(' e aos cálculos elaborados e melhor discriminados '),
     run('supra', { italic: true }),
-    run(', deverá ' + nomeVencido + ' proceder à liquidação a ' + nomeVencedor + ' da quantia total de '),
+    run(', deverá ' + nomeVencido + ' proceder à liquidação à minha Constituinte ' + nomeVencedor + ' da quantia total de '),
     run(fmtEuroDoc(nota.total), { bold: true, underline: true }),
     run(', mediante transferência bancária para o IBAN n.º '),
     runHighlight('[indicar]'),
