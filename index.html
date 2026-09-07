@@ -234,6 +234,22 @@
 
 </div>
 
+<!-- Modal: selecção de notas a exportar -->
+<div class="modal-scrim" id="modalNotasScrim"></div>
+<div class="modal-dialog" id="modalNotas" role="dialog" aria-modal="true" aria-labelledby="modalNotasTitulo">
+  <div class="modal-head">
+    <div class="modal-titulo" id="modalNotasTitulo">Selecionar notas a gerar</div>
+  </div>
+  <div class="modal-body" id="modalNotasBody"></div>
+  <div class="modal-foot">
+    <button class="btn btn-secondary" id="modalNotasCancelar">Cancelar</button>
+    <button class="btn btn-primary"   id="modalNotasGerar">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 13v4h12v-4M10 3v9M6 8l4 4 4-4"/></svg>
+      Gerar selecionadas
+    </button>
+  </div>
+</div>
+
 <div class="drawer-scrim" id="drawerScrim" onclick="closeDrawer()"></div>
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true">
   <div class="drawer-head">

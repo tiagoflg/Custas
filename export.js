@@ -7,7 +7,9 @@
 /* ── Formatação ── */
 function fmtEuroDoc(v) {
   const rounded = Math.round((v || 0) * 100) / 100;
-  return 'EUR ' + rounded.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const [intPart, decPart] = rounded.toFixed(2).split('.');
+  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return 'EUR ' + intFormatted + ',' + decPart;
 }
 function fmtPctDoc(v) {
   return parseFloat(v.toFixed(4)).toString().replace('.', ',') + '%';
@@ -331,13 +333,14 @@ function tRowData(col1, col2, col3, opts = {}) {
 }
 
 /* linha de subtotal (itálico + cinzento) — mesmas bordas de dados normais */
-function tRowSubtotal(label, valor, topSz = 4, fnXml = '') {
+function tRowSubtotal(label, valor, topSz = 4, fnXml = '', fase = '') {
   const rXml = run(label, { italic: true, color: '808080' }) + fnXml;
+  const c2Xml = fase ? run(fase, { italic: true, color: '808080' }) : '';
   const vXml = run(valor, { italic: true, color: '808080' });
   return `<w:tr>`
-    + tCell(rXml, TC1, 'center', brdC1(topSz, 4))
-    + tCell('',   TC2, 'center', brdC2(topSz, 4))
-    + tCell(vXml, TC3, 'center', brdC3(topSz, 4))
+    + tCell(rXml,  TC1, 'center', brdC1(topSz, 4))
+    + tCell(c2Xml, TC2, 'center', brdC2(topSz, 4))
+    + tCell(vXml,  TC3, 'center', brdC3(topSz, 4))
     + `</w:tr>`;
 }
 
@@ -545,8 +548,8 @@ function gerarDocumentXml(r, st, nota) {
     : 'Todas as instâncias';
 
   const rowsRubrC = [tRowHead()];
-  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes'), faseRubrC, fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
-  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4, fnRubrC));
+  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes'), '', fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
+  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4, fnRubrC, faseRubrC));
   // Mostrar divisão pelo nº efectivo de partes se houver rateio (somaFactoresVitoria ≠ 1)
   if (nEfectivoInt && Math.round(nEfectivo) > 1) {
     const nInt = Math.round(nEfectivo);
@@ -575,7 +578,7 @@ function gerarDocumentXml(r, st, nota) {
   const rowsIV = [tRowHead()];
   rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + fnA, faseRubrC, fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
   if (nota.rubrB > 0) rowsIV.push(tRowData('Encargos', '', fmtEuroDoc(nota.rubrB), { topSz: 4, botSz: 4 }));
-  rowsIV.push(tRowData('Compensação de honorários', '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
+  rowsIV.push(tRowData('Compensação de honorários', faseRubrC, fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
   rowsIV.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.total), { topSz: 4, botSz: 0, isTotal: true }));
   paras.push(mkTable(rowsIV));
   paras.push(paraEsp(240));
@@ -735,6 +738,64 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
 }
 
 /* ════════════════════════════════════════════════════════════
+   MODAL DE SELECÇÃO DE NOTAS
+════════════════════════════════════════════════════════════ */
+
+/**
+ * Mostra o modal de seleção e devolve uma Promise que resolve com
+ * um array dos índices selecionados, ou rejeita se o utilizador cancelar.
+ */
+function mostrarSelectorNotas(notas) {
+  return new Promise((resolve, reject) => {
+    const scrim  = document.getElementById('modalNotasScrim');
+    const dialog = document.getElementById('modalNotas');
+    const body   = document.getElementById('modalNotasBody');
+    const btnOk  = document.getElementById('modalNotasGerar');
+    const btnCan = document.getElementById('modalNotasCancelar');
+
+    // Preencher lista
+    body.innerHTML = '';
+    notas.forEach((nota, i) => {
+      const nome = nota.nome || nota.grupo || ('Nota ' + (i + 1));
+      const sub  = nota.grupo && nota.nome ? nota.grupo : '';
+      const row  = document.createElement('label');
+      row.className = 'modal-nota-row';
+      row.innerHTML =
+        `<input type="checkbox" checked data-idx="${i}">` +
+        `<div>` +
+          `<div class="modal-nota-nome">${nome}</div>` +
+          (sub ? `<div class="modal-nota-sub">${sub}</div>` : '') +
+        `</div>`;
+      body.appendChild(row);
+    });
+
+    // Abrir
+    scrim.classList.add('open');
+    dialog.classList.add('open');
+
+    function fechar() {
+      scrim.classList.remove('open');
+      dialog.classList.remove('open');
+      btnOk.removeEventListener('click', onOk);
+      btnCan.removeEventListener('click', onCan);
+      scrim.removeEventListener('click', onCan);
+    }
+    function onOk() {
+      const indices = [...body.querySelectorAll('input[type="checkbox"]:checked')]
+        .map(cb => parseInt(cb.dataset.idx, 10));
+      fechar();
+      if (indices.length === 0) { reject(new Error('nenhuma')); return; }
+      resolve(indices);
+    }
+    function onCan() { fechar(); reject(new Error('cancelado')); }
+
+    btnOk.addEventListener('click', onOk);
+    btnCan.addEventListener('click', onCan);
+    scrim.addEventListener('click', onCan);
+  });
+}
+
+/* ════════════════════════════════════════════════════════════
    EXPORT PRINCIPAL
 ════════════════════════════════════════════════════════════ */
 async function exportarNotas() {
@@ -764,13 +825,16 @@ async function exportarNotas() {
     if (!confirm('⚠ A soma das Rubricas A excede a TJ efetivamente paga.\nVerifique os dados antes de apresentar em juízo. Continuar na mesma?')) return;
   }
 
-  const nNotas = r.notasIndividuais.length;
-  if (nNotas > 1) {
-    const ok = confirm(
-      'Serão gerados ' + nNotas + ' ficheiros .docx (um por parte vencida).\n\n' +
-      'O browser irá iniciar ' + nNotas + ' transferências seguidas — confirme os downloads se solicitado.'
-    );
-    if (!ok) return;
+  // Selecção de notas: modal quando há mais de uma, directo quando há só uma
+  let indicesSel;
+  if (r.notasIndividuais.length > 1) {
+    try {
+      indicesSel = await mostrarSelectorNotas(r.notasIndividuais);
+    } catch {
+      return; // cancelado ou nenhuma selecionada
+    }
+  } else {
+    indicesSel = [0];
   }
 
   const btn = document.getElementById('btnExportar');
@@ -779,7 +843,8 @@ async function exportarNotas() {
     btn.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 4v12M4 10h12"/></svg> A gerar…';
   }
   try {
-    for (let i = 0; i < r.notasIndividuais.length; i++) {
+    for (let ii = 0; ii < indicesSel.length; ii++) {
+      const i    = indicesSel[ii];
       const nota = r.notasIndividuais[i];
       const { docXml, footnotesXml, footerXml } = gerarDocumentXml(r, st, nota);
       const blob = await montarDocx(docXml, footnotesXml, footerXml, st.numProcesso);
@@ -808,7 +873,7 @@ async function exportarNotas() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      if (i < r.notasIndividuais.length - 1) await new Promise(res => setTimeout(res, 300));
+      if (ii < indicesSel.length - 1) await new Promise(res => setTimeout(res, 300));
     }
   } catch (err) {
     console.error('Erro ao gerar nota:', err);
