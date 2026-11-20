@@ -501,10 +501,18 @@ function gerarDocumentXml(r, st, nota) {
   let totalTJVd = 0;
   let nextTopVd = 4;
   r.instDetalhe.forEach(inst => {
-    const lbl    = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
-    const tpV    = inst.tjPartesCorrigidas?.find(tp => tp.partId === nota.parteId);
-    const tjPaga = tpV?.tjPaga || 0;
-    const remEf  = tpV?.remEfectivo || 0;
+    const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+    const tpV = inst.tjPartesCorrigidas?.find(tp => tp.partId === nota.parteId);
+    // Para coligação: usar TJ individual do membro; para litisconsórcio/autónomo: usar o grupo
+    let tjPaga, remEf;
+    if (nota.membroId != null && tpV?.membrosTJ) {
+      const mtj = tpV.membrosTJ.find(m => m.membroId === nota.membroId);
+      tjPaga = mtj?.tjPaga || 0;
+      remEf  = mtj?.remEfectivo || 0;
+    } else {
+      tjPaga = tpV?.tjPaga || 0;
+      remEf  = tpV?.remEfectivo || 0;
+    }
     const disp   = inst.dispensaRem > 0 ? ' (dispensa ' + fmtPctDoc(inst.dispensaRem) + ')' : '';
     const isLastRow = remEf <= 0;
     if (tjPaga > 0) {

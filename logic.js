@@ -65,10 +65,15 @@
    Coeficiente de parte autónoma/litis:
      coef_parte = decaimento_parte / 100  (usando decaimento global)
 
-   Coeficiente final de cada nota:
-     coef_final = coef_parte × factorVitoriaCliente_medio
-     onde factorVitoriaCliente_medio = média dos factores de vitória do cliente por instância,
-     ponderada pelas TJ corrigidas de cada instância.
+   Coeficiente de membro de coligação:
+     coef_membro = decaimento (individual, ou do grupo) × valorPedido_membro / Σ valorPedido
+
+   Peso de cada nota (por grupo de instâncias):
+     peso_X = coef_X / max(Σ coef_vencidos, fvCliente)
+     rubrA_X = tjCliente × peso_X × fvCliente      (= tjCliente × coef_X se Σ dec = 100%)
+     rubrB_X = encargos  × peso_X × fvCliente
+     rubrC_X = limIndivCliente × peso_X            (limIndiv já incorpora fvCliente)
+     → Σ peso ≤ 1: o cliente nunca recebe mais do que lhe cabe (sem duplo reembolso).
 ═══════════════════════════════════════════════════════════════ */
 
 const UC = 102;
@@ -460,7 +465,25 @@ function computeResult(state) {
         const factorVitoriaParte = 1 - decParte;
         const tjCorr           = tjBruta * factorVitoriaParte;
 
-        return { ...tp, remEfectivo, tjCorrigida: tjCorr, decUsado: decParte * 100, factorVitoria: factorVitoriaParte };
+        // Para coligação: calcular remEfectivo por membro (cada um tem o seu valorPedido)
+        let membrosTJ = null;
+        if (tp.membrosTJ && parte.relacao === 'colig') {
+          const col = normColuna(tp.coluna || 'A');
+          membrosTJ = tp.membrosTJ.map(mtj => {
+            const membro = parte.membros?.find(m => m.id === mtj.membroId);
+            const v = (membro?.valorPedido || 0) > 0 ? membro.valorPedido : valorAcao;
+            let remMembroEf = 0;
+            if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && mtj.tjPaga > 0) {
+              const remTotal = calcTJTeorica(v, col).rem;
+              remMembroEf    = remTotal * (1 - dispensaFrac);
+            }
+            return { membroId: mtj.membroId, tjPaga: mtj.tjPaga, remEfectivo: remMembroEf };
+          });
+        }
+
+        const result = { ...tp, remEfectivo, tjCorrigida: tjCorr, decUsado: decParte * 100, factorVitoria: factorVitoriaParte };
+        if (membrosTJ) result.membrosTJ = membrosTJ;
+        return result;
       });
 
       const detalhe = { ...inst, dispensaFrac, tjBaseInst, remInstTotal, tjCorrigidaInst, tjPartesCorrigidas };
@@ -531,15 +554,13 @@ function computeResult(state) {
           m => m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
         );
         parte.membros.forEach(m => {
-          let coefParte;
-          if (temDecIndividual) {
-            const decM = (m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== '')
-              ? (m.decaimento / 100) : decGrupoP;
-            coefParte = decM;
-          } else {
-            const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
-            coefParte  = decGrupoP * prop;
-          }
+          // Coligação: o decaimento de cada membro é ponderado pelo valor do seu pedido
+          // (art. 528.º, n.º 4, CPC). Com decaimento individual preenchido usa-se esse
+          // valor; caso contrário, o decaimento do grupo. Em ambos os casos × proporção.
+          const decM = temDecIndividual && m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
+            ? (m.decaimento / 100) : decGrupoP;
+          const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
+          const coefParte = decM * prop;
           const propPedido = totalPedidos > 0
             ? (m.valorPedido || 0) / totalPedidos
             : 1 / parte.membros.length;
@@ -561,10 +582,16 @@ function computeResult(state) {
       }
     });
 
-    // Rubrica A: não normalizar — o coefParte já é o coeficiente final correcto.
-    // rubrA = tjCliente × coefParte × fvCliente (sem divisão pelo somaCoef)
-    // Exemplo: T com dec=43% → rubrA = 1632 × 0,43 × 1,0 = 701,76 ✓
+    // Peso de cada nota no montante recuperável pelo cliente neste grupo:
+    //   peso = coefParte / max(Σ coefParte, fvCliente)
+    // Com decaimentos coerentes (soma = 100%), Σ coefParte = fvCliente e
+    // rubrA = tjCliente × coefParte. O max() impede que, com dados incoerentes
+    // (soma < 100%), o peso seja inflacionado; e Σ peso ≤ 1 impede o reembolso
+    // em duplicado (sem enriquecimento).
+    // Exemplos: cliente 0% / T 43% → rubrA = 1632 × 0,43 = 701,76
+    //           cliente 30% / A 70% → peso = 1 → rubrA = TJ × 0,70; rubrC = limIndiv
     const nVencidosGrupo = notasTempGrupo.length;
+    const somaCoefGrupo  = notasTempGrupo.reduce((s, n) => s + n.coefParte, 0);
     notasTempGrupo.forEach(n => { n.nVencidosTotal = nVencidosGrupo; });
 
     // Calcular fvCliente neste grupo para rubrC
@@ -590,10 +617,12 @@ function computeResult(state) {
     // Acumular contribuições
     notasTempGrupo.forEach(n => {
       const chaveNota = n.parteId + (n.membroId != null ? '-' + n.membroId : '');
-      const rubrAContrib = tjClienteGrupo * n.coefParte * fvCli;
-      const coefRubrC    = n.coefParte * fvCli;
-      // Rubrica C: usa o limIndiv do CLIENTE neste grupo (não da parte vencida)
-      const rubrCContrib = limIndivClienteGrupo * coefRubrC;
+      const denom        = Math.max(somaCoefGrupo, fvCli);
+      const peso         = denom > 0 ? n.coefParte / denom : 0;
+      const rubrAContrib = tjClienteGrupo * peso * fvCli;
+      // Rubrica C: limIndiv do CLIENTE já incorpora fvCliente — aplica-se só o peso
+      const coefRubrC    = peso;
+      const rubrCContrib = limIndivClienteGrupo * peso;
 
       if (!contrib.has(chaveNota)) {
         contrib.set(chaveNota, {
@@ -617,6 +646,7 @@ function computeResult(state) {
         label: labelGrupo,
         tjCliente: tjClienteGrupo,
         coefParte: n.coefParte,
+        peso,
         fvCliente: fvCli,
         rubrA: rubrAContrib,
         limIndivCliente: limIndivClienteGrupo,
@@ -695,15 +725,11 @@ function computeResult(state) {
         m => m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
       );
       parte.membros.forEach(m => {
-        let coefParte;
-        if (temDecIndividual) {
-          const decM = (m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== '')
-            ? (m.decaimento / 100) : decGrupoP;
-          coefParte = decM;
-        } else {
-          const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
-          coefParte  = decGrupoP * prop;
-        }
+        // Mesmo critério das Rubricas A e C: decaimento (individual ou do grupo) × proporção do pedido
+        const decM = temDecIndividual && m.decaimento !== null && m.decaimento !== undefined && m.decaimento !== ''
+          ? (m.decaimento / 100) : decGrupoP;
+        const prop = totalPedidos > 0 ? (m.valorPedido || 0) / totalPedidos : 1 / parte.membros.length;
+        const coefParte = decM * prop;
         notasBTemp.push({ parteId: parte.id, membroId: m.id, coefParte });
       });
     } else {
@@ -713,7 +739,8 @@ function computeResult(state) {
   const somaDecB   = notasBTemp.reduce((s, n) => s + n.coefParte, 0);
   const nNotasB    = notasBTemp.length;
   notasBTemp.forEach(n => {
-    n.pesoRubrB = somaDecB > 0 ? n.coefParte / somaDecB : 1 / nNotasB;
+    const denomB = Math.max(somaDecB, factorCliente);
+    n.pesoRubrB = denomB > 0 ? n.coefParte / denomB : 1 / nNotasB;
   });
 
   contrib.forEach((c, chaveNota) => {

@@ -822,6 +822,20 @@ function updateInstHints() {
   });
 }
 
+/* Mensagem de divergência da TJ paga face à TJ teórica.
+   Regime atual (art. 14.º, n.º 9, RCP, red. Lei 27/2019): a vencedora não paga o
+   remanescente. Se a TJ introduzida exceder a TJ base numa instância da Tabela I com
+   valor > € 275.000, é provável que inclua o remanescente — que a calculadora já
+   estima à parte, e que assim seria contado duas vezes. */
+function msgDivergenciaTJ(tjPaga, tjTeo, div) {
+  if (!(tjTeo > 0) || Math.abs(tjPaga - tjTeo) <= 0.02) return null;
+  const tipo = div?.querySelector('.i-tipo')?.value || '1inst';
+  if (tjPaga > tjTeo && TIPOS_COM_REM.has(tipo) && getValorAcao() > 275000) {
+    return '⚠ Superior à TJ base. No regime atual (art. 14.º, n.º 9, RCP) a vencedora não paga o remanescente: indique só a TJ base — o remanescente é estimado à parte.';
+  }
+  return '⚠ Divergência face à TJ teórica';
+}
+
 function onInstInput(e) {
   const el = e.target;
   if (el.classList.contains('i-tj')) {
@@ -833,9 +847,13 @@ function onInstInput(e) {
       const col = colSel?.value || 'A';
       const tjTeo = calcTJTeorica(getValorAcao(), col).base;
       const tjPaga = num(el.value);
-      const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.02;
+      const msg = msgDivergenciaTJ(tjPaga, tjTeo, div);
       const alertaEl = el.closest('.inst-parte-block')?.querySelector(`.tj-alerta-field[data-pid="${pid}"]`);
-      if (alertaEl) alertaEl.style.display = diverge ? '' : 'none';
+      if (alertaEl) {
+        alertaEl.style.display = msg ? '' : 'none';
+        const t = alertaEl.querySelector('.alerta-tj');
+        if (t && msg) t.textContent = msg;
+      }
     }
   }
   if (el.classList.contains('i-tj-m')) {
@@ -851,9 +869,12 @@ function onInstInput(e) {
         const v = m.valorPedido > 0 ? m.valorPedido : getValorAcao();
         const tjTeo = calcTJTeorica(v, col).base;
         const tjPaga = num(el.value);
-        const diverge = tjTeo > 0 && Math.abs(tjPaga - tjTeo) > 0.02;
+        const msg = msgDivergenciaTJ(tjPaga, tjTeo, div);
         const alertaEl = el.closest('.colig-membro-row')?.querySelector(`.tj-alerta-m[data-mid="${mid}"]`);
-        if (alertaEl) alertaEl.style.display = diverge ? '' : 'none';
+        if (alertaEl) {
+          alertaEl.style.display = msg ? '' : 'none';
+          if (msg) alertaEl.textContent = msg.startsWith('⚠ Divergência') ? `⚠ Divergência (teórica: ${fmtEuroLong(tjTeo)})` : msg;
+        }
       }
     }
   }
@@ -944,13 +965,16 @@ function collectState() {
         return { partId: parte.id, coluna: 'A', tjPaga: 0, tjTeorica: 0 };
       }
       let tjPaga = 0, coluna = 'A';
+      let membrosTJ = null; // só para coligação: TJ individual de cada membro
       if (modo === 'tabI') {
         if (parte.relacao === 'colig') {
           const colSel = el.querySelector(`.i-coluna-grupo[data-pid="${parte.id}"]`);
           coluna = colSel?.value || 'B';
-          tjPaga = parte.membros.reduce((s, m) => {
-            return s + num(el.querySelector(`.i-tj-m[data-pid="${parte.id}"][data-mid="${m.id}"]`)?.value);
-          }, 0);
+          membrosTJ = parte.membros.map(m => ({
+            membroId: m.id,
+            tjPaga: num(el.querySelector(`.i-tj-m[data-pid="${parte.id}"][data-mid="${m.id}"]`)?.value),
+          }));
+          tjPaga = membrosTJ.reduce((s, m) => s + m.tjPaga, 0);
         } else {
           const colSel = el.querySelector(`.i-coluna[data-pid="${parte.id}"]`);
           coluna = colSel?.value || 'A';
@@ -964,7 +988,9 @@ function collectState() {
       const tjTeorica = modo === 'tabI'
         ? calcTJTeoricaParteInst(parte, valorAcao, coluna)
         : 0;
-      return { partId: parte.id, coluna, tjPaga, tjTeorica };
+      const entry = { partId: parte.id, coluna, tjPaga, tjTeorica };
+      if (membrosTJ) entry.membrosTJ = membrosTJ;
+      return entry;
     });
 
     const dispensaRem = num(el.querySelector('.i-dispensa-rem')?.value, 0);
@@ -1596,7 +1622,6 @@ function renderResult() {
         } else {
           const decParte = gd0 ? gd0.coefParte / nota.proporcao : nota.coefParte / nota.proporcao;
           coefDesc = `Decaimento ${fmtPct(decParte * 100)} × proporção ${propPct}${pedidoInfo}`;
-          if (r.decCliente > 0) coefDesc += ` × factor cliente ${fmtPct(nota.factorCliente * 100)}`;
         }
       } else {
         // autónoma
@@ -1604,7 +1629,6 @@ function renderResult() {
           coefDesc = `Decaimento por instância (ver decomposição)`;
         } else {
           coefDesc = `Decaimento ${fmtPct(nota.coefParte * 100)}`;
-          if (r.decCliente > 0) coefDesc += ` × factor cliente ${fmtPct(nota.factorCliente * 100)}`;
         }
       }
 
@@ -1614,7 +1638,7 @@ function renderResult() {
       if (gd.length === 1) {
         // caso simples: 1 grupo → equação numa linha
         const g = gd[0];
-        const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+        const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct((g.peso ?? g.coefParte) * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
         htmlRubrA = `
           <div class="rrow">
             <span class="d"><span class="rubric-badge">A</span>TJ do cliente × coeficiente</span>
@@ -1624,7 +1648,7 @@ function renderResult() {
       } else {
         // múltiplos grupos → linha por grupo + subtotal
         const linhas = gd.map(g => {
-          const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+          const formula = `${fmtEuroLong(g.tjCliente)} × ${fmtPct((g.peso ?? g.coefParte) * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
           return `<div class="nota-formula-sub"><span class="nota-formula-label">${g.label}</span>${formula} = ${fmtEuroLong(g.rubrA)}</div>`;
         }).join('');
         htmlRubrA = `
@@ -1649,7 +1673,7 @@ function renderResult() {
       let htmlRubrC = '';
       if (gd.length === 1) {
         const g = gd[0];
-        // Mostrar equação: limIndiv × dec × prop [× fvCli]
+        // Mostrar equação: limIndiv × peso (limIndiv já incorpora fvCli)
         // limIndiv = limGlobal × fvCli / somaFV
         let formulaLimIndiv = '';
         if (g.somaFV > 1.001) {
@@ -1658,7 +1682,7 @@ function renderResult() {
         } else {
           formulaLimIndiv = `limite = ${fmtEuroLong(g.limIndivCliente)}`;
         }
-        const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+        const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct((g.peso ?? g.coefParte) * 100)}`;
         htmlRubrC = `
           <div class="rrow">
             <span class="d"><span class="rubric-badge">C</span>Compensação honorários</span>
@@ -1671,7 +1695,7 @@ function renderResult() {
           let formulaLimIndiv = g.somaFV > 1.001
             ? `${fmtEuroLong(g.limGlobal)} × ${fmtPct(g.fvClienteGrupo * 100)} ÷ ${fmtPct(g.somaFV * 100)} = ${fmtEuroLong(g.limIndivCliente)}`
             : `limite = ${fmtEuroLong(g.limIndivCliente)}`;
-          const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct(g.coefParte * 100)}${g.fvCliente < 1 ? ` × ${fmtPct(g.fvCliente * 100)}` : ''}`;
+          const formulaC = `${fmtEuroLong(g.limIndivCliente)} × ${fmtPct((g.peso ?? g.coefParte) * 100)}`;
           return `<div class="nota-formula-sub nota-formula-c"><span class="nota-formula-label">${g.label}</span>${formulaLimIndiv} → ${formulaC} = ${fmtEuroLong(g.rubrC)}</div>`;
         }).join('');
         htmlRubrC = `
