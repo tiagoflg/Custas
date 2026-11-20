@@ -444,8 +444,27 @@ function computeResult(state) {
         tjBaseInst   += tjBase;
         somaTJBase   += tjBase; // acumulador global
 
+        // Coligação (art. 528.º, n.º 4, CPC): TJ e remanescente apurados por membro,
+        // cada um sobre o seu valorPedido (para discriminação nas notas).
+        let membrosTJ = null;
+        if (tp.membrosTJ && parte.relacao === 'colig') {
+          const col = normColuna(tp.coluna || 'A');
+          membrosTJ = tp.membrosTJ.map(mtj => {
+            const membro = parte.membros?.find(m => m.id === mtj.membroId);
+            const v = (membro?.valorPedido || 0) > 0 ? membro.valorPedido : valorAcao;
+            let remMembroEf = 0;
+            if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && mtj.tjPaga > 0) {
+              remMembroEf = calcTJTeorica(v, col).rem * (1 - dispensaFrac);
+            }
+            return { membroId: mtj.membroId, nome: membro?.nome || '', tjPaga: mtj.tjPaga, remEfectivo: remMembroEf };
+          });
+        }
+
         let remEfectivo = 0;
-        if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && tjBase > 0) {
+        if (membrosTJ) {
+          remEfectivo   = membrosTJ.reduce((s2, m) => s2 + m.remEfectivo, 0);
+          remInstTotal += remEfectivo;
+        } else if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && tjBase > 0) {
           const col      = normColuna(tp.coluna || 'A');
           const remTotal = calcRemParteInst(parte, valorAcao, col);
           remEfectivo    = remTotal * (1 - dispensaFrac);
@@ -464,22 +483,6 @@ function computeResult(state) {
         const decParte         = decEfectivo(parte, inst.id) / 100;
         const factorVitoriaParte = 1 - decParte;
         const tjCorr           = tjBruta * factorVitoriaParte;
-
-        // Para coligação: calcular remEfectivo por membro (cada um tem o seu valorPedido)
-        let membrosTJ = null;
-        if (tp.membrosTJ && parte.relacao === 'colig') {
-          const col = normColuna(tp.coluna || 'A');
-          membrosTJ = tp.membrosTJ.map(mtj => {
-            const membro = parte.membros?.find(m => m.id === mtj.membroId);
-            const v = (membro?.valorPedido || 0) > 0 ? membro.valorPedido : valorAcao;
-            let remMembroEf = 0;
-            if (estimarRem && TIPOS_COM_REM.has(inst.tipo) && mtj.tjPaga > 0) {
-              const remTotal = calcTJTeorica(v, col).rem;
-              remMembroEf    = remTotal * (1 - dispensaFrac);
-            }
-            return { membroId: mtj.membroId, tjPaga: mtj.tjPaga, remEfectivo: remMembroEf };
-          });
-        }
 
         const result = { ...tp, remEfectivo, tjCorrigida: tjCorr, decUsado: decParte * 100, factorVitoria: factorVitoriaParte };
         if (membrosTJ) result.membrosTJ = membrosTJ;
@@ -592,6 +595,11 @@ function computeResult(state) {
     //           cliente 30% / A 70% → peso = 1 → rubrA = TJ × 0,70; rubrC = limIndiv
     const nVencidosGrupo = notasTempGrupo.length;
     const somaCoefGrupo  = notasTempGrupo.reduce((s, n) => s + n.coefParte, 0);
+
+    // Rubrica C: a base é o somatório das TJ de TODAS as partes (incluindo a de cada
+    // membro coligado), rateado pelos vencedores e repartido pelo peso de cada nota.
+    // Na coligação, a nota de cada membro DISCRIMINA na Secção III de quem é cada TJ
+    // da base (export.js) e só lhe imputa, na Secção II, a TJ que ele próprio pagou.
     notasTempGrupo.forEach(n => { n.nVencidosTotal = nVencidosGrupo; });
 
     // Calcular fvCliente neste grupo para rubrC
@@ -655,6 +663,8 @@ function computeResult(state) {
         somaFV: somaFVGrupo,
         fvClienteGrupo: fvCli,
         limGlobal: limGlobalGrupo,
+        instIds: instsGrupo.map(i => i.id),
+        temRem: instDetalheGrupo.some(d => (d.tjPartesCorrigidas || []).some(tp => (tp.remEfectivo || 0) > 0)),
       });
     });
   }); // fim forEach grupos

@@ -379,6 +379,42 @@ function nomeParteDisplay(parte) {
   return parte.nome || '';
 }
 
+/* ── Designação da fase / peça processual (segue o modelo PLMJ) ──
+   - designação livre da instância (Passo 2), se preenchida
+   - 1.ª instância: peça da parte (Petição Inicial / Contestação), conforme a posição processual
+   - incidente de intervenção de terceiros: "Intervenção de Terceiros"
+   - restantes: nome do tipo de instância                                   */
+function faseBase(inst) {
+  if (inst.designacao) return inst.designacao;
+  if (/^interv_/.test(inst.subtipo || '')) return 'Intervenção de Terceiros';
+  const l = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+  return l.replace(/\s*\(Tab\. II\)$/, '');
+}
+function pecaDe(inst, parte) {
+  if (inst.designacao) return inst.designacao;
+  if (inst.tipo === '1inst') {
+    if (parte?.posicao === 'autor') return 'Petição Inicial';
+    if (parte?.posicao === 'reu' || parte?.posicao === 'interv') return 'Contestação';
+    return '1.ª Instância';
+  }
+  return faseBase(inst);
+}
+function faseIncidente(inst) {
+  const b = faseBase(inst);
+  return (inst.tipo === 'incidente' || /^interv_/.test(inst.subtipo || '')) && !/^incidente/i.test(b)
+    ? 'Incidente de ' + b : b;
+}
+function faseGrupoIII(insts) {
+  return insts.map(i => i.tipo === '1inst' ? '1.ª Instância' : faseIncidente(i)).join(' / ');
+}
+function faseGrupoIV(insts, parteVencida, cliente) {
+  return insts.map(i => {
+    if (i.tipo !== '1inst') return faseIncidente(i);
+    const a = pecaDe(i, parteVencida), b = pecaDe(i, cliente);
+    return a === b ? a : a + ' / ' + b;
+  }).join(' / ');
+}
+
 function gerarDocumentXml(r, st, nota) {
   const cliente = r.cliente;
 
@@ -387,7 +423,10 @@ function gerarDocumentXml(r, st, nota) {
 
   // Parte vencida: identificar a parte pelo parteId da nota e expandir litis se necessário
   const parteVencida = r.todasPartes?.find(p => p.id === nota.parteId);
-  const nomeVencido  = (parteVencida ? nomeParteDisplay(parteVencida) : '') || nota.nome || nota.grupo || 'Parte vencida';
+  // Coligação: cada membro tem nota própria — identificar o membro, não o grupo
+  const nomeVencido  = (nota.membroId != null && nota.nome)
+    ? nota.nome
+    : ((parteVencida ? nomeParteDisplay(parteVencida) : '') || nota.nome || nota.grupo || 'Parte vencida');
   const numProcesso  = st.numProcesso || '[N.º do processo]';
   const tribunal     = st.tribunal    || '[Tribunal]';
   // mandatário preenchido directamente na nota (campo com highlight)
@@ -439,7 +478,19 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraAlinea('Identificação do processo'));
   paras.push(paraItem('Tribunal', tribunal));
   paras.push(paraItem('Processo', numProcesso));
-  if (st.valorAcao > 0) paras.push(paraItem('Valor da ação', fmtEuroDoc(st.valorAcao)));
+  if (st.valorAcao > 0) {
+    const coligs = (r.todasPartes || []).filter(p => p.relacao === 'colig' && p.membros?.some(m => m.valorPedido > 0));
+    const pedidos = coligs.flatMap(p => p.membros.filter(m => m.valorPedido > 0));
+    const somaPed = pedidos.reduce((s2, m) => s2 + m.valorPedido, 0);
+    let fnValor = '';
+    if (pedidos.length > 1 && Math.abs(somaPed - st.valorAcao) < 0.01) {
+      const lista = pedidos.map(m => (m.nome || 'Membro') + ' (' + fmtEuroDoc(m.valorPedido) + ')');
+      const txt = lista.length > 1 ? lista.slice(0, -1).join(', ') + ' e ' + lista[lista.length - 1] : lista[0];
+      fnValor = addFn(run('Correspondente à soma dos pedidos de ' + txt + ', conforme ', { size: 14 })
+        + runHighlightFn('[indicar]') + run('.', { size: 14 }));
+    }
+    paras.push(paraItem('Valor da ação', fmtEuroDoc(st.valorAcao)).replace('</w:p>', fnValor + '</w:p>'));
+  }
   paras.push(paraEsp(80));
   paras.push(paraAlinea('Identificação dos mandatários'));
   paras.push(paraItemHL('Parte vencedora'));
@@ -455,8 +506,11 @@ function gerarDocumentXml(r, st, nota) {
   const rowsVenc = [tRowHead()];
   let totalTJVenc = 0, totalEncVenc = 0;
   let nextTopVenc = 4;
-  r.instDetalhe.forEach(inst => {
-    const lbl    = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+  // Só as instâncias/incidentes em que esta parte vencida interveio (fases desta nota)
+  const instIdsNota = new Set((nota.gruposDetalhe || []).filter(g => g.rubrA > 0 || g.rubrC > 0).flatMap(g => g.instIds || []));
+  const instsNota   = instIdsNota.size ? r.instDetalhe.filter(i => instIdsNota.has(i.id)) : r.instDetalhe;
+  instsNota.forEach(inst => {
+    const lbl    = pecaDe(inst, cliente);
     const tpCli  = inst.tjPartesCorrigidas?.find(tp => tp.partId === cliente.id);
     const tjPaga = tpCli?.tjPaga || 0;
     const remEf  = tpCli?.remEfectivo || 0;
@@ -488,7 +542,8 @@ function gerarDocumentXml(r, st, nota) {
       totalEncVenc += enc.val;
     });
   }
-  rowsVenc.push(tRowSubtotal('Total Taxas', fmtEuroDoc(totalTJVenc), nextTopVenc));
+  const fnProporcaoTxt = 'Valor que apenas será imputado a título de compensação na proporção respetiva.';
+  rowsVenc.push(tRowSubtotal('Total Taxas', fmtEuroDoc(totalTJVenc), nextTopVenc, addFnTexto(fnProporcaoTxt)));
   if (totalEncVenc > 0) rowsVenc.push(tRowSubtotal('Total Encargos', fmtEuroDoc(totalEncVenc), 4));
 
   paras.push(paraAlinea('Pelas partes vencedoras', true));
@@ -500,8 +555,8 @@ function gerarDocumentXml(r, st, nota) {
   const rowsVd = [tRowHead()];
   let totalTJVd = 0;
   let nextTopVd = 4;
-  r.instDetalhe.forEach(inst => {
-    const lbl = TIPOS_PRINCIPAIS.find(t => t.v === inst.tipo)?.l || inst.tipo;
+  instsNota.forEach(inst => {
+    const lbl = pecaDe(inst, parteVencida);
     const tpV = inst.tjPartesCorrigidas?.find(tp => tp.partId === nota.parteId);
     // Para coligação: usar TJ individual do membro; para litisconsórcio/autónomo: usar o grupo
     let tjPaga, remEf;
@@ -527,7 +582,7 @@ function gerarDocumentXml(r, st, nota) {
       totalTJVd += remEf;
     }
   });
-  rowsVd.push(tRowSubtotal('Total Taxas', fmtEuroDoc(totalTJVd), nextTopVd));
+  rowsVd.push(tRowSubtotal('Total Taxas', fmtEuroDoc(totalTJVd), nextTopVd, addFnTexto(fnProporcaoTxt)));
 
   paras.push(paraAlinea('Pela parte vencida'));
   paras.push(paraEsp(80));
@@ -538,10 +593,9 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraTituloSec('Identificação da compensação da parte vencedora face às despesas com honorários do mandatário judicial'));
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. d), e 26.º, n.º 3, al. c), do RCP'));
 
-  const fnRubrC    = addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.');
-  const fnPortaria = addFnTexto('Nos termos e para os efeitos do disposto no artigo 32.º, n.º 2, da Portaria n.º 419-A/2009, de 17 de abril.');
+  const fnPortariaTxt = 'Nos termos e para os efeitos do disposto no artigo 32.º, n.º 2, da Portaria n.º 419-A/2009, de 17 de abril.';
   const pctDecNota = fmtPctDoc(nota.coefParte * 100);
-  const fnDecIII   = addFnTexto('Considerando o coeficiente de decaimento de ' + pctDecNota + '.');
+  const fnDecIIITxt = 'Considerando o coeficiente de decaimento de ' + pctDecNota + '.';
 
   // Somatório TJ de todas as partes = limGlobal × 2 (limGlobal já é 50% do total)
   const somaTodasTJ   = r.limGlobal * 2;
@@ -556,37 +610,58 @@ function gerarDocumentXml(r, st, nota) {
     : 'Todas as instâncias';
 
   const rowsRubrC = [tRowHead()];
-  rowsRubrC.push(tRowData(run('Somatório da taxa de justiça de todas as partes'), '', fmtEuroDoc(somaTodasTJ), { topSz: 4, botSz: 4 }));
-  rowsRubrC.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(limGlobal50), 4, fnRubrC, faseRubrC));
-  // Mostrar divisão pelo nº efectivo de partes se houver rateio (somaFactoresVitoria ≠ 1)
-  if (nEfectivoInt && Math.round(nEfectivo) > 1) {
-    const nInt = Math.round(nEfectivo);
-    rowsRubrC.push(tRowSubtotal('Subtotal (50%/' + nInt + ')', fmtEuroDoc(limPorParte), 4, fnPortaria));
-  } else if (!nEfectivoInt || nEfectivo > 1) {
-    // caso não-inteiro: mostrar igual
-    rowsRubrC.push(tRowSubtotal('Limite individual', fmtEuroDoc(limPorParte), 4, fnPortaria));
-  }
-  rowsRubrC.push(tRowData(run('Total', { bold: true }) + fnDecIII, '', fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 0, isTotal: true }));
-
-  paras.push(paraEsp(80));
-  paras.push(mkTable(rowsRubrC));
-  paras.push(paraEsp(160));
+  // Uma tabela por fase autónoma (grupo de instâncias com as mesmas partes), como no
+  // modelo: somatório das TJ de todas as partes → 50% → rateio pelos vencedores → total.
+  // A TJ das restantes partes só entra aqui, e apenas na proporção respetiva (rodapé na Secção II).
+  const gruposNota = (nota.gruposDetalhe || []).filter(g => g.rubrA > 0 || g.rubrC > 0);
+  const somaCGr    = gruposNota.reduce((s2, g) => s2 + (g.rubrC || 0), 0);
+  const escalaC    = somaCGr > 0 ? nota.rubrC / somaCGr : 1; // limite art. 26.º/5 RCP
+  const coefTxt = g => {
+    const coef = g.coefParte != null ? g.coefParte : nota.coefParte;
+    if (nota.membroId != null && nota.proporcao) {
+      return 'Considerando o coeficiente de decaimento concreto (' + fmtPctDoc(coef * 100) + ': decaimento de '
+        + fmtPctDoc(coef / nota.proporcao * 100) + ' × proporção do pedido desta parte no total dos pedidos dos coligados, de '
+        + fmtPctDoc(nota.proporcao * 100) + ' — art. 528.º, n.º 4, do CPC).';
+    }
+    return 'Considerando o coeficiente de decaimento concreto (' + fmtPctDoc(coef * 100) + ').';
+  };
+  const instsDe = g => (g.instIds || []).map(id => r.instDetalhe.find(i => i.id === id)).filter(Boolean);
+  gruposNota.forEach((g, gi) => {
+    const instsG = instsDe(g);
+    const fase   = instsG.length ? faseGrupoIII(instsG) : (g.label || faseRubrC);
+    const rows   = [tRowHead()];
+    const fnRem  = g.temRem
+      ? addFnTexto('Inclui o remanescente estimado da taxa de justiça (art. 6.º, n.º 7, do RCP), imputado a final à parte vencida (art. 14.º, n.º 9, do RCP), sujeito a retificação após notificação da conta de custas (art. 25.º, n.º 1, in fine, do RCP).')
+      : '';
+    rows.push(tRowData(run('Somatório da taxa de justiça de todas as partes') + fnRem, fase, fmtEuroDoc(g.limGlobal * 2), { topSz: 4, botSz: 4 }));
+    rows.push(tRowSubtotal('Subtotal (50%)', fmtEuroDoc(g.limGlobal), 4, addFnTexto('Nos termos e para os efeitos do disposto no artigo 26.º, n.º 3, al. c), do RCP.')));
+    const sfv = g.somaFV || 1, fvc = g.fvClienteGrupo != null ? g.fvClienteGrupo : 1;
+    if (Math.abs(sfv - 1) > 1e-9 || fvc < 1 - 1e-9) {
+      const nInt = Math.round(sfv);
+      const lbl  = (Math.abs(sfv - nInt) < 1e-9 && fvc > 1 - 1e-9) ? 'Subtotal (50%/' + nInt + ')' : 'Limite individual';
+      rows.push(tRowSubtotal(lbl, fmtEuroDoc(g.limIndivCliente), 4, addFnTexto(fnPortariaTxt)));
+    }
+    rows.push(tRowData(run('Total', { bold: true }) + addFnTexto(coefTxt(g)), '', fmtEuroDoc((g.rubrC || 0) * escalaC), { topSz: 4, botSz: 0, isTotal: true }));
+    paras.push(paraEsp(80));
+    paras.push(mkTable(rows));
+    paras.push(paraEsp(gi === gruposNota.length - 1 ? 160 : 120));
+  });
 
   /* ── SECÇÃO IV ── */
   paras.push(paraTituloSec('Identificação do valor a receber a título de custas de parte'));
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. e), e 26.º do RCP'));
 
-  // Footnote Rubrica A — coeficiente de decaimento individual
-  const textoFnA = 'Considerando o coeficiente de decaimento de ' + pctDecNota + '.';
-  const fnA = addFnTexto(textoFnA);
-
   const decLabel = nota.coefParte * 100 === 100 ? 'Total' : fmtPctDoc(nota.coefParte * 100);
 
   paras.push(paraEsp(80));
   const rowsIV = [tRowHead()];
-  rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + fnA, faseRubrC, fmtEuroDoc(nota.rubrA), { topSz: 4, botSz: 4 }));
+  gruposNota.forEach(g => {
+    const instsG = instsDe(g);
+    const fase   = instsG.length ? faseGrupoIV(instsG, parteVencida, cliente) : (g.label || faseRubrC);
+    rowsIV.push(tRowData(run('Reembolso das taxas de justiça') + addFnTexto(coefTxt(g)), fase, fmtEuroDoc(g.rubrA || 0), { topSz: 4, botSz: 4 }));
+    rowsIV.push(tRowData('Compensação de honorários', '', fmtEuroDoc((g.rubrC || 0) * escalaC), { topSz: 4, botSz: 4 }));
+  });
   if (nota.rubrB > 0) rowsIV.push(tRowData('Encargos', '', fmtEuroDoc(nota.rubrB), { topSz: 4, botSz: 4 }));
-  rowsIV.push(tRowData('Compensação de honorários', faseRubrC, fmtEuroDoc(nota.rubrC), { topSz: 4, botSz: 4 }));
   rowsIV.push(tRowData(run('Total', { bold: true }), '', fmtEuroDoc(nota.total), { topSz: 4, botSz: 0, isTotal: true }));
   paras.push(mkTable(rowsIV));
   paras.push(paraEsp(240));
@@ -607,7 +682,9 @@ function gerarDocumentXml(r, st, nota) {
     run('supra', { italic: true }),
     run(', deverá a ' + nomeVencido + ' proceder à liquidação à minha Constituinte ' + nomeVencedor + ' da quantia total de '),
     run(fmtEuroDoc(nota.total), { bold: true, underline: true }),
-    run(', mediante transferência bancária para o IBAN n.º '),
+    run(', mediante transferência para a conta titulada pela ' + nomeVencedor + ' junto do Banco '),
+    runHighlight('[indicar]'),
+    run(', com o IBAN '),
     runHighlight('[indicar]'),
     run(', sendo remetido o respetivo comprovativo para o e-mail: '),
     runHighlight('[indicar]'),
@@ -617,7 +694,7 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraEsp(480));
   paras.push(para(
     pPr({ jc: 'left', spacing: 'w:after="120" w:line="360" w:lineRule="auto"' }),
-    runHighlight('[Local]'), run(', ' + dataDoc)
+    run('Lisboa, ' + dataDoc)
   ));
   paras.push(paraEsp(240));
   paras.push(para(
@@ -666,9 +743,13 @@ function gerarDocumentXml(r, st, nota) {
     + `<w:document ${W_NS}><w:body>`
     + paras.join('')
     + `<w:sectPr>`
+    + `<w:headerReference w:type="default" r:id="rId7"/>`
     + `<w:footerReference w:type="default" r:id="rId6"/>`
+    + `<w:headerReference w:type="first" r:id="rId8"/>`
+    + `<w:footerReference w:type="first" r:id="rId6"/>`
     + `<w:pgSz w:w="11906" w:h="16838"/>`
-    + `<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/>`
+    + `<w:pgMar w:top="2268" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="675" w:gutter="0"/>`
+    + `<w:titlePg/>`
     + `</w:sectPr>`
     + `</w:body></w:document>`;
 
@@ -688,6 +769,9 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
     + `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`
     + `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`
     + `<Default Extension="xml" ContentType="application/xml"/>`
+    + `<Default Extension="png" ContentType="image/png"/>`
+    + `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
+    + `<Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
     + `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>`
     + `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>`
     + `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>`
@@ -710,6 +794,8 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
     + `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>`
     + `<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>`
     + `<Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>`
+    + `<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`
+    + `<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>`
     + `</Relationships>`;
 
   const endnotes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
@@ -738,6 +824,13 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
   zip.file('word/footnotes.xml', footnotesXml);
   zip.file('word/endnotes.xml', endnotes);
   zip.file('word/footer1.xml', footerXml);
+  // Logótipo PLMJ: header2 = 1.ª página (bloco PL/MJ); header1 = páginas seguintes (faixa P L M J)
+  zip.file('word/header1.xml', headerLogoXml(101, 'Logo PLMJ seguintes'));
+  zip.file('word/header2.xml', headerLogoXml(102, 'Logo PLMJ primeira'));
+  zip.file('word/_rels/header1.xml.rels', headerRelsXml('media/logo_seguintes.png'));
+  zip.file('word/_rels/header2.xml.rels', headerRelsXml('media/logo_primeira.png'));
+  zip.file('word/media/logo_seguintes.png', LOGO_SEGUINTES_PNG_B64, { base64: true });
+  zip.file('word/media/logo_primeira.png', LOGO_PRIMEIRA_PNG_B64, { base64: true });
   zip.file('word/styles.xml', stylesXml);
   zip.file('word/numbering.xml', numberingXml);
   zip.file('word/settings.xml', settings);

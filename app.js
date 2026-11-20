@@ -139,6 +139,15 @@ function renderParteRow(parte, isCliente) {
           <option value="colig"${parte.relacao === 'colig'  ? ' selected' : ''}>Coligação</option>
         </select>
       </div>
+      <div class="field" style="width:150px;">
+        <div class="label"><span>Posição processual</span></div>
+        <select class="p-posicao" data-pid="${parte.id}">
+          <option value=""${!parte.posicao ? ' selected' : ''}>—</option>
+          <option value="autor"${parte.posicao === 'autor' ? ' selected' : ''}>Autor</option>
+          <option value="reu"${parte.posicao === 'reu' ? ' selected' : ''}>Réu</option>
+          <option value="interv"${parte.posicao === 'interv' ? ' selected' : ''}>Interveniente</option>
+        </select>
+      </div>
       <div class="field" style="width:130px;">
         <div class="label">
           <span>Decaimento global</span>
@@ -301,6 +310,7 @@ function onParteInput(e, parteId, isCliente) {
   if (el.classList.contains('p-mandatario')) parte.mandatario = el.value;
   if (el.classList.contains('p-artigo')) parte.artigo = el.value;
   if (el.classList.contains('p-dec')) parte.decaimento = num(el.value);
+  if (el.classList.contains('p-posicao')) parte.posicao = el.value; // peça na nota (Petição Inicial / Contestação)
   if (el.classList.contains('l-nome')) {
     // nome de membro do litisconsórcio
     const m = parte.membros.find(x => x.id === +el.dataset.mid);
@@ -457,6 +467,13 @@ function buildInstHTML(id) {
         </div>
         <div class="field-hint">0% = sem dispensa · 100% = dispensa total</div>
       </div>
+    </div>
+    <div class="field" style="margin-bottom:.75rem;">
+      <div class="label">
+        <span>Designação na nota <span style="color:var(--muted);font-weight:400;">(opcional)</span></span>
+        <span class="label-help" data-tip="Texto usado na coluna 'Fase Processual / Peça Processual' da nota (ex.: Intervenção de Terceiros). Em branco: designação automática.">?</span>
+      </div>
+      <input type="text" class="i-designacao" data-instid="${id}" value="${(instData.designacao || '').replace(/"/g, '&quot;')}" placeholder="ex: Intervenção de Terceiros" />
     </div>
     <div class="inst-partes-sel" id="inst-partes-sel-${id}">
       ${buildInstPartesSelHTML(id)}
@@ -995,9 +1012,10 @@ function collectState() {
 
     const dispensaRem = num(el.querySelector('.i-dispensa-rem')?.value, 0);
     // sincronizar tipo e dispensa no estado (sInst2 já foi encontrado acima)
-    if (sInst2) { sInst2.tipo = tipo; sInst2.dispensaRem = dispensaRem; }
+    const designacao = (el.querySelector('.i-designacao')?.value || '').trim();
+    if (sInst2) { sInst2.tipo = tipo; sInst2.dispensaRem = dispensaRem; sInst2.designacao = designacao; }
 
-    return { id: i.id, tipo, subtipo, dispensaRem, tjPartes };
+    return { id: i.id, tipo, subtipo, dispensaRem, designacao, tjPartes };
   }).filter(Boolean);
 
   const encargos = S.enc.map(e => ({
@@ -1084,8 +1102,8 @@ function updateSummary() {
   const sub = $('#bigSub');
   if (show && r.totalBruto > 0) {
     sub.style.display = 'block';
-    const remLabel = r.estimarRem && r.somaRemEstimado > 0
-      ? ` (inclui rem. estimado ${fmtEuroLong(r.somaRemEstimado)})`
+    const remLabel = r.estimarRem && r.somaRemTotal > 0
+      ? ` (base da Rubrica C inclui rem. estimado de todas as partes: ${fmtEuroLong(r.somaRemTotal)})`
       : '';
     sub.textContent = `Base: ${fmtEuroLong(r.tjBasePagaCliente)} + ${fmtEuroLong(r.rubrB)} + ${fmtEuroLong(r.limIndiv)}${remLabel}`;
   } else {
@@ -1499,6 +1517,19 @@ function renderResult() {
           ? ` <span class="muted-small">dec. ${fmtPct(tp.decUsado)}</span>` : '';
         const remInfo = tp.remEfectivo > 0
           ? ` <span class="muted-small">+ rem. ${fmtEuroLong(tp.remEfectivo)}</span>` : '';
+        // Coligação: responsabilidade individual (art. 528.º, n.º 4, CPC) — mostrar cada membro
+        if (tp.membrosTJ?.length) {
+          tp.membrosTJ.forEach(mt => {
+            const nomeM = mt.nome || parte.membros?.find(m => m.id === mt.membroId)?.nome || 'Membro';
+            const remM  = mt.remEfectivo > 0
+              ? ` <span class="muted-small">+ rem. ${fmtEuroLong(mt.remEfectivo)}</span>` : '';
+            html += `<div class="rrow">
+          <span class="d">&nbsp;&nbsp;${nomeM} <span class="muted-small">(${parte.nome}, coligação)</span>${colLabel} · TJ paga${remM}${decInfo}</span>
+          <span class="v">${fmtEuroLong(mt.tjPaga)}</span>
+        </div>`;
+          });
+          return;
+        }
         html += `<div class="rrow">
           <span class="d">&nbsp;&nbsp;${parte.nome}${isCliente ? ' <span class="tag-cliente">cliente</span>' : ''}${colLabel} · TJ paga${remInfo}${decInfo}</span>
           <span class="v">${fmtEuroLong(tp.tjPaga)}${diverge ? ' <span class="alerta-inline">⚠ teórica: ' + fmtEuroLong(tp.tjTeorica) + '</span>' : ''}</span>
@@ -1546,7 +1577,7 @@ function renderResult() {
         const pct = fmtPct(imp.proporcao * 100);
         const somaDec = fmtPct(r.imputacaoRem.reduce((s, x) => s + x.decaimento, 0));
         return `<div class="rrow" style="padding-left:1.25rem;">
-          <span class="d">${imp.nome} · ${fmtPct(imp.decaimento)}% / ${somaDec} <span class="muted-small">(proporção do decaimento)</span></span>
+          <span class="d">${imp.nome} · ${fmtPct(imp.decaimento)} / ${somaDec} <span class="muted-small">(proporção do decaimento)</span></span>
           <span class="v">${fmtEuroLong(imp.montante)}</span>
         </div>`;
       }).join('')
@@ -1885,7 +1916,7 @@ function saveState() {
       limHon: $('#limHon')?.checked || false,
       honReais: $('#honReais')?.value || '',
       partes: S.partes.map(p => ({
-        id: p.id, nome: p.nome, relacao: p.relacao,
+        id: p.id, nome: p.nome, relacao: p.relacao, posicao: p.posicao || '',
         decaimento: p.decaimento, decaimentoInst: p.decaimentoInst || {},
         membros: p.membros.map(m => ({
           id: m.id, nome: m.nome, valorPedido: m.valorPedido, decaimento: m.decaimento
@@ -1906,6 +1937,7 @@ function saveState() {
         }
         return {
           id: i.id, tipo: i.tipo || '1inst', dispensaRem: i.dispensaRem || 0, tjPartes,
+          designacao: el?.querySelector('.i-designacao')?.value || i.designacao || '',
           partesExcluidas: i.partesExcluidas ? Array.from(i.partesExcluidas) : []
         };
       }),
@@ -1955,7 +1987,7 @@ function loadState() {
     $('#instList').innerHTML = '';
     S.inst = [];
     (snap.inst || []).forEach(si => {
-      S.inst.push({ id: si.id, tipo: si.tipo, dispensaRem: si.dispensaRem || 0, partesExcluidas: new Set(si.partesExcluidas || []) });
+      S.inst.push({ id: si.id, tipo: si.tipo, dispensaRem: si.dispensaRem || 0, designacao: si.designacao || '', partesExcluidas: new Set(si.partesExcluidas || []) });
       S.instIdx = Math.max(S.instIdx, si.id);
       // Renderizar a instância (inline, sem chamar addInst que incrementaria S.instIdx)
       const instDiv = document.createElement('div');
