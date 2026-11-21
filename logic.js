@@ -335,7 +335,30 @@ function decEfectivo(parte, instId) {
 /* ══════════════════════════════════════════════════════════════
    Cálculo principal — computeResult
 ══════════════════════════════════════════════════════════════ */
+/* ── Reconvenção (arts. 299.º, n.º 2, e 530.º, n.os 2 e 3, CPC) ──
+   Com pedido reconvencional distinto, o valor da causa é a soma dos dois pedidos e a TJ
+   é uma só (paga sobre esse valor). O decaimento de cada parte é ponderado pelo valor
+   de cada pedido — critério seguido pelo Ac. STJ de 31-10-2023, proc. 3966/21.3T8GDM.P1.S1:
+     dec = (decAção × valorAção + decReconv × valorReconv) ÷ (valorAção + valorReconv)
+   Parte sem decaimento na reconvenção (campo em branco) = não intervém nela → conta só a ação.
+   Os decaimentos específicos por instância (decaimentoInst) não são ponderados.          */
+function aplicarReconvencao(state) {
+  const VA = state.valorPedidoAutor || 0, VR = state.valorReconv || 0;
+  if (!(VR > 0) || !(VA > 0)) return state;
+  const VT = VA + VR;
+  const pond = p => {
+    if (!p) return p;
+    const temRec = p.decReconv !== null && p.decReconv !== undefined && p.decReconv !== '';
+    if (!temRec) return { ...p, decAcao: p.decaimento || 0, decReconv: null };
+    const d = ((p.decaimento || 0) * VA + Number(p.decReconv) * VR) / VT;
+    return { ...p, decAcao: p.decaimento || 0, decReconv: Number(p.decReconv), decaimento: d };
+  };
+  return { ...state, cliente: pond(state.cliente), partes: (state.partes || []).map(pond),
+           reconvencao: { valorPedidoAutor: VA, valorReconv: VR } };
+}
+
 function computeResult(state) {
+  state = aplicarReconvencao(state);
   const {
     valorAcao = 0,
     estimarRem = false,
@@ -792,6 +815,7 @@ function computeResult(state) {
 
   return {
     valorAcao, estimarRem, cliente, partes, todasPartes, partesUnicas,
+    reconvencao: state.reconvencao || null,
     decCliente: decClienteGlobal, factorCliente,
     tjBasePagaCliente,
     somaRemEstimado, somaRemTotal, poolRemImputavel, imputacaoRem, rubrB,

@@ -483,7 +483,12 @@ function gerarDocumentXml(r, st, nota) {
     const pedidos = coligs.flatMap(p => p.membros.filter(m => m.valorPedido > 0));
     const somaPed = pedidos.reduce((s2, m) => s2 + m.valorPedido, 0);
     let fnValor = '';
-    if (pedidos.length > 1 && Math.abs(somaPed - st.valorAcao) < 0.01) {
+    const valorBaseColig = r.reconvencao ? r.reconvencao.valorPedidoAutor : st.valorAcao;
+    if (r.reconvencao) {
+      fnValor = addFnTexto('Correspondente à soma do valor do pedido do autor (' + fmtEuroDoc(r.reconvencao.valorPedidoAutor)
+        + ') com o valor do pedido reconvencional (' + fmtEuroDoc(r.reconvencao.valorReconv)
+        + '), nos termos do artigo 299.º, n.º 2, do CPC.');
+    } else if (pedidos.length > 1 && Math.abs(somaPed - valorBaseColig) < 0.01) {
       const lista = pedidos.map(m => (m.nome || 'Membro') + ' (' + fmtEuroDoc(m.valorPedido) + ')');
       const txt = lista.length > 1 ? lista.slice(0, -1).join(', ') + ' e ' + lista[lista.length - 1] : lista[0];
       fnValor = addFn(run('Correspondente à soma dos pedidos de ' + txt + ', conforme ', { size: 14 })
@@ -641,7 +646,16 @@ function gerarDocumentXml(r, st, nota) {
       const lbl  = (Math.abs(sfv - nInt) < 1e-9 && fvc > 1 - 1e-9) ? 'Subtotal (50%/' + nInt + ')' : 'Limite individual';
       rows.push(tRowSubtotal(lbl, fmtEuroDoc(g.limIndivCliente), 4, addFnTexto(fnPortariaTxt)));
     }
-    rows.push(tRowData(run('Total', { bold: true }) + addFnTexto(coefTxt(g)), '', fmtEuroDoc((g.rubrC || 0) * escalaC), { topSz: 4, botSz: 0, isTotal: true }));
+    // Quando a parte vencedora também decaiu, o seu grau de vencimento já está refletido no
+    // limite individual: a parte vencida responde por "peso" desse limite (não pelo coeficiente outra vez)
+    const coefG = g.coefParte != null ? g.coefParte : nota.coefParte;
+    const pesoG = g.peso != null ? g.peso : coefG;
+    const fnTotIII = Math.abs(pesoG - coefG) > 1e-6
+      ? addFnTexto('Considerando o coeficiente de decaimento concreto da parte vencida (' + fmtPctDoc(coefG * 100)
+          + '), já refletido no limite individual da parte vencedora, correspondendo a parte vencida a '
+          + fmtPctDoc(pesoG * 100) + ' desse limite.')
+      : addFnTexto(coefTxt(g));
+    rows.push(tRowData(run('Total', { bold: true }) + fnTotIII, '', fmtEuroDoc((g.rubrC || 0) * escalaC), { topSz: 4, botSz: 0, isTotal: true }));
     paras.push(paraEsp(80));
     paras.push(mkTable(rows));
     paras.push(paraEsp(gi === gruposNota.length - 1 ? 160 : 120));
@@ -652,6 +666,22 @@ function gerarDocumentXml(r, st, nota) {
   paras.push(paraRefLegal('Artigos 25.º, n.º 2, al. e), e 26.º do RCP'));
 
   const decLabel = nota.coefParte * 100 === 100 ? 'Total' : fmtPctDoc(nota.coefParte * 100);
+
+  // Reconvenção: explicitar a derivação do coeficiente (ponderação pelo valor dos pedidos)
+  if (r.reconvencao && parteVencida && parteVencida.decReconv != null) {
+    const rc = r.reconvencao, VT = rc.valorPedidoAutor + rc.valorReconv;
+    const fnStj = addFnTexto('Critério de ponderação pelo valor de cada pedido seguido, designadamente, no Acórdão do Supremo Tribunal de Justiça de 31.10.2023, proc. 3966/21.3T8GDM.P1.S1.');
+    const linhaParte = (p, papel) => papel + ' — ação (' + fmtEuroDoc(rc.valorPedidoAutor) + '): ' + fmtPctDoc(p.decAcao)
+      + '; reconvenção (' + fmtEuroDoc(rc.valorReconv) + '): ' + fmtPctDoc(p.decReconv)
+      + '; decaimento global: ' + fmtPctDoc(p.decaimento) + '.';
+    paras.push(para(
+      pPr({ jc: 'both', spacing: 'w:after="120" w:line="360" w:lineRule="auto"' }),
+      run('Havendo ação e reconvenção, o decaimento de cada parte corresponde à média dos decaimentos em cada pedido, ponderada pelo respetivo valor (' + fmtEuroDoc(VT) + ' no total):'),
+      fnStj
+    ));
+    paras.push(paraItem('Parte vencida', linhaParte(parteVencida, nomeVencido).replace(nomeVencido + ' — ', '')));
+    if (cliente.decReconv != null) paras.push(paraItem('Parte vencedora', linhaParte(cliente, nomeVencedor).replace(nomeVencedor + ' — ', '')));
+  }
 
   paras.push(paraEsp(80));
   const rowsIV = [tRowHead()];

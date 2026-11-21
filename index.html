@@ -69,6 +69,18 @@
       <div class="hint" id="valorHint">Introduza o valor da ação para ver o escalão aplicável.</div>
     </div>
 
+    <div class="field full" style="margin-bottom:1.5rem;">
+      <div class="label">
+        <span>Valor da reconvenção <span style="color:var(--muted);font-weight:400;">(opcional — só se o pedido for distinto)</span></span>
+        <span class="label-help" data-tip="O valor do pedido reconvencional só se soma ao do autor quando os pedidos são distintos (não na mera compensação). Com reconvenção, indique para cada parte o decaimento na ação e na reconvenção: a calculadora pondera-os pelo valor de cada pedido (Ac. STJ 31-10-2023, proc. 3966/21.3T8GDM.P1.S1).">arts. 299.º/2 e 530.º/2-3 CPC</span>
+      </div>
+      <div class="affix">
+        <span class="affix-pre">€</span>
+        <input type="number" id="valorReconv" min="0" step="0.01" placeholder="0,00" />
+      </div>
+      <div class="hint" id="reconvHint">Deixe em branco se não houver reconvenção (ou se o pedido não for distinto).</div>
+    </div>
+
     <div class="subsection-title">O meu cliente</div>
     <div class="hint" style="margin-bottom:.75rem;">A parte que representa e em nome de quem apresenta a nota de custas.</div>
     <div id="clienteWrap"></div>

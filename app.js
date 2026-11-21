@@ -18,7 +18,10 @@ const $  = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
 const num = (v, d = 0) => { const n = parseFloat(v); if (!Number.isFinite(n)) return d; return Math.round(n * 1e6) / 1e6; };
 
-function getValorAcao() { return num($('#valorAcao')?.value); }
+/* Valor da causa = pedido do autor + pedido reconvencional distinto (art. 299.º, n.º 2, CPC) */
+function getValorPedidoAutor() { return num($('#valorAcao')?.value); }
+function getValorReconv()      { return num($('#valorReconv')?.value); }
+function getValorAcao()        { return getValorPedidoAutor() + getValorReconv(); }
 function getCliente()   { return S.partes.find(p => p.id === S.clienteId); }
 function getRestantes() { return S.partes.filter(p => p.id !== S.clienteId); }
 function getEstimarRem(){ return !!$('#estimarRem')?.checked; }
@@ -148,9 +151,19 @@ function renderParteRow(parte, isCliente) {
           <option value="interv"${parte.posicao === 'interv' ? ' selected' : ''}>Interveniente</option>
         </select>
       </div>
+      <div class="field rec-field" style="width:130px;${getValorReconv() > 0 ? '' : 'display:none;'}">
+        <div class="label">
+          <span>Dec. reconvenção</span>
+          <span class="label-help" data-tip="Decaimento desta parte no pedido reconvencional. Em branco = não intervém na reconvenção (conta só o decaimento na ação).">?</span>
+        </div>
+        <div class="affix">
+          <input type="number" class="p-dec-rec" min="0" max="100" step="any" value="${parte.decReconv ?? ''}" placeholder="—" />
+          <span class="affix-post">%</span>
+        </div>
+      </div>
       <div class="field" style="width:130px;">
         <div class="label">
-          <span>Decaimento global</span>
+          <span class="lbl-dec">${getValorReconv() > 0 ? 'Dec. ação' : 'Decaimento global'}</span>
           <span class="label-help" data-tip="Valor por defeito. Pode ser sobreposto por instância no Passo 2.">default</span>
         </div>
         <div class="affix">
@@ -310,7 +323,8 @@ function onParteInput(e, parteId, isCliente) {
   if (el.classList.contains('p-mandatario')) parte.mandatario = el.value;
   if (el.classList.contains('p-artigo')) parte.artigo = el.value;
   if (el.classList.contains('p-dec')) parte.decaimento = num(el.value);
-  if (el.classList.contains('p-posicao')) parte.posicao = el.value; // peça na nota (Petição Inicial / Contestação)
+  if (el.classList.contains('p-posicao')) parte.posicao = el.value;
+  if (el.classList.contains('p-dec-rec')) parte.decReconv = el.value === '' ? null : num(el.value); // peça na nota (Petição Inicial / Contestação)
   if (el.classList.contains('l-nome')) {
     // nome de membro do litisconsórcio
     const m = parte.membros.find(x => x.id === +el.dataset.mid);
@@ -1025,6 +1039,8 @@ function collectState() {
 
   return {
     valorAcao,
+    valorPedidoAutor: getValorPedidoAutor(),
+    valorReconv: getValorReconv(),
     numProcesso: ($('#numProcesso')?.value || '').trim(),
     tribunal: ($('#tribunal')?.value || '').trim(),
     estimarRem: getEstimarRem(),
@@ -1146,6 +1162,17 @@ function updateAvisoDecaimento() {
   const soma = partesActivas.reduce((s, p) => s + (p.decaimento || 0), 0);
   const diff = Math.round((soma - 100) * 100) / 100; // evitar floating-point noise
 
+  // Reconvenção: a soma dos decaimentos na reconvenção (partes que nela intervêm) também deve ser 100%
+  if (getValorReconv() > 0) {
+    const comRec = partesActivas.filter(p => p.decReconv !== null && p.decReconv !== undefined && p.decReconv !== '');
+    const somaR  = comRec.reduce((s, p) => s + (+p.decReconv || 0), 0);
+    if (comRec.length && Math.round((somaR - 100) * 100) !== 0) {
+      aviso.textContent = `⚠ A soma dos decaimentos na reconvenção é ${fmtPct(somaR)} — deve ser 100%.` + (diff !== 0 ? ` A soma na ação é ${fmtPct(soma)}.` : '');
+      aviso.style.display = 'block';
+      return;
+    }
+  }
+
   if (diff === 0) {
     aviso.style.display = 'none';
   } else {
@@ -1157,7 +1184,19 @@ function updateAvisoDecaimento() {
   }
 }
 
+/* Mostra/esconde os campos da reconvenção e actualiza a indicação do valor da causa */
+function updateReconvUI() {
+  const temRec = getValorReconv() > 0;
+  $$('.rec-field').forEach(el => { el.style.display = temRec ? '' : 'none'; });
+  $$('.lbl-dec').forEach(el => { el.textContent = temRec ? 'Dec. ação' : 'Decaimento global'; });
+  const h = $('#reconvHint');
+  if (h) h.innerHTML = temRec
+    ? `<span class="hint-strong">Valor da causa: ${fmtEuroLong(getValorAcao())}</span> (ação ${fmtEuroLong(getValorPedidoAutor())} + reconvenção ${fmtEuroLong(getValorReconv())}). Indique o decaimento de cada parte na ação e na reconvenção.`
+    : 'Deixe em branco se não houver reconvenção (ou se o pedido não for distinto).';
+}
+
 function onAnyInput() {
+  updateReconvUI();
   saveState();
   onValorAcaoChange();
   toggleHon();
@@ -1882,6 +1921,7 @@ function resetAll() {
   $('#instList').innerHTML = '';
   $('#encList').innerHTML = '';
   $('#valorAcao').value = '';
+  if ($('#valorReconv')) $('#valorReconv').value = '';
   if ($('#numProcesso')) $('#numProcesso').value = '';
   if ($('#tribunal')) $('#tribunal').value = '';
   $('#limHon').checked = false;
@@ -1910,6 +1950,7 @@ function saveState() {
   try {
     const snap = {
       valorAcao: $('#valorAcao')?.value || '',
+      valorReconv: $('#valorReconv')?.value || '',
       numProcesso: $('#numProcesso')?.value || '',
       tribunal: $('#tribunal')?.value || '',
       estimarRem: $('#estimarRem')?.checked || false,
@@ -1917,6 +1958,7 @@ function saveState() {
       honReais: $('#honReais')?.value || '',
       partes: S.partes.map(p => ({
         id: p.id, nome: p.nome, relacao: p.relacao, posicao: p.posicao || '',
+        decReconv: p.decReconv ?? null,
         decaimento: p.decaimento, decaimentoInst: p.decaimentoInst || {},
         membros: p.membros.map(m => ({
           id: m.id, nome: m.nome, valorPedido: m.valorPedido, decaimento: m.decaimento
@@ -1977,6 +2019,7 @@ function loadState() {
 
     // Restaurar campos do processo
     if (snap.valorAcao) $('#valorAcao').value = snap.valorAcao;
+    if (snap.valorReconv && $('#valorReconv')) $('#valorReconv').value = snap.valorReconv;
     if (snap.numProcesso) $('#numProcesso').value = snap.numProcesso;
     if (snap.tribunal) $('#tribunal').value = snap.tribunal;
     if (snap.estimarRem) $('#estimarRem').checked = snap.estimarRem;
@@ -2070,6 +2113,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   $('#valorAcao').addEventListener('input', onAnyInput);
+  $('#valorReconv')?.addEventListener('input', onAnyInput);
   $('#limHon').addEventListener('change', onAnyInput);
   $('#honReais').addEventListener('input', onAnyInput);
   if ($('#estimarRem')) $('#estimarRem').addEventListener('change', onAnyInput);
