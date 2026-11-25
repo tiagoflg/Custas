@@ -1951,6 +1951,7 @@ function saveState() {
     const snap = {
       valorAcao: $('#valorAcao')?.value || '',
       valorReconv: $('#valorReconv')?.value || '',
+      incluirLogo: $('#incluirLogo') ? $('#incluirLogo').checked : true,
       numProcesso: $('#numProcesso')?.value || '',
       tribunal: $('#tribunal')?.value || '',
       estimarRem: $('#estimarRem')?.checked || false,
@@ -2020,6 +2021,7 @@ function loadState() {
     // Restaurar campos do processo
     if (snap.valorAcao) $('#valorAcao').value = snap.valorAcao;
     if (snap.valorReconv && $('#valorReconv')) $('#valorReconv').value = snap.valorReconv;
+    if ($('#incluirLogo') && snap.incluirLogo === false) $('#incluirLogo').checked = false;
     if (snap.numProcesso) $('#numProcesso').value = snap.numProcesso;
     if (snap.tribunal) $('#tribunal').value = snap.tribunal;
     if (snap.estimarRem) $('#estimarRem').checked = snap.estimarRem;
@@ -2114,6 +2116,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   $('#valorAcao').addEventListener('input', onAnyInput);
   $('#valorReconv')?.addEventListener('input', onAnyInput);
+  $('#incluirLogo')?.addEventListener('change', saveState);
   $('#limHon').addEventListener('change', onAnyInput);
   $('#honReais').addEventListener('input', onAnyInput);
   if ($('#estimarRem')) $('#estimarRem').addEventListener('change', onAnyInput);

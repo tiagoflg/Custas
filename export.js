@@ -416,6 +416,8 @@ function faseGrupoIV(insts, parteVencida, cliente) {
 }
 
 function gerarDocumentXml(r, st, nota) {
+  // Logótipo PLMJ no cabeçalho: opcional (caixa "Incluir logótipo PLMJ" no Passo 4)
+  const comLogo = st.incluirLogo !== false && typeof headerLogoXml === 'function';
   const cliente = r.cliente;
 
   // Parte vencedora: cliente (pode estar em litisconsórcio)
@@ -773,17 +775,19 @@ function gerarDocumentXml(r, st, nota) {
     + `<w:document ${W_NS}><w:body>`
     + paras.join('')
     + `<w:sectPr>`
-    + `<w:headerReference w:type="default" r:id="rId7"/>`
-    + `<w:footerReference w:type="default" r:id="rId6"/>`
-    + `<w:headerReference w:type="first" r:id="rId8"/>`
-    + `<w:footerReference w:type="first" r:id="rId6"/>`
+    + (comLogo
+        ? `<w:headerReference w:type="default" r:id="rId7"/>`
+          + `<w:footerReference w:type="default" r:id="rId6"/>`
+          + `<w:headerReference w:type="first" r:id="rId8"/>`
+          + `<w:footerReference w:type="first" r:id="rId6"/>`
+        : `<w:footerReference w:type="default" r:id="rId6"/>`)
     + `<w:pgSz w:w="11906" w:h="16838"/>`
-    + `<w:pgMar w:top="2268" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="675" w:gutter="0"/>`
-    + `<w:titlePg/>`
+    + `<w:pgMar w:top="${comLogo ? 2268 : 1418}" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="675" w:gutter="0"/>`
+    + (comLogo ? `<w:titlePg/>` : '')
     + `</w:sectPr>`
     + `</w:body></w:document>`;
 
-  return { docXml, footnotesXml, footerXml };
+  return { docXml, footnotesXml, footerXml, comLogo };
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -793,15 +797,18 @@ function gerarDocumentXml(r, st, nota) {
 ════════════════════════════════════════════════════════════ */
 
 /* Versão com JSZip (carregado via CDN) ou fallback manual */
-async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
+async function montarDocx(docXml, footnotesXml, footerXml, numProcesso, comLogo = true) {
+  comLogo = comLogo && typeof headerLogoXml === 'function';
   // Ficheiros estáticos minimais para um .docx válido
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
     + `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`
     + `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`
     + `<Default Extension="xml" ContentType="application/xml"/>`
-    + `<Default Extension="png" ContentType="image/png"/>`
-    + `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
-    + `<Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
+    + (comLogo
+        ? `<Default Extension="png" ContentType="image/png"/>`
+          + `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
+          + `<Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`
+        : '')
     + `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>`
     + `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>`
     + `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>`
@@ -824,8 +831,10 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
     + `<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>`
     + `<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>`
     + `<Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>`
-    + `<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`
-    + `<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>`
+    + (comLogo
+        ? `<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`
+          + `<Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>`
+        : '')
     + `</Relationships>`;
 
   const endnotes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
@@ -855,12 +864,14 @@ async function montarDocx(docXml, footnotesXml, footerXml, numProcesso) {
   zip.file('word/endnotes.xml', endnotes);
   zip.file('word/footer1.xml', footerXml);
   // Logótipo PLMJ: header2 = 1.ª página (bloco PL/MJ); header1 = páginas seguintes (faixa P L M J)
+  if (comLogo) {
   zip.file('word/header1.xml', headerLogoXml(101, 'Logo PLMJ seguintes'));
   zip.file('word/header2.xml', headerLogoXml(102, 'Logo PLMJ primeira'));
   zip.file('word/_rels/header1.xml.rels', headerRelsXml('media/logo_seguintes.png'));
   zip.file('word/_rels/header2.xml.rels', headerRelsXml('media/logo_primeira.png'));
   zip.file('word/media/logo_seguintes.png', LOGO_SEGUINTES_PNG_B64, { base64: true });
   zip.file('word/media/logo_primeira.png', LOGO_PRIMEIRA_PNG_B64, { base64: true });
+  }
   zip.file('word/styles.xml', stylesXml);
   zip.file('word/numbering.xml', numberingXml);
   zip.file('word/settings.xml', settings);
@@ -935,6 +946,7 @@ async function exportarNotas() {
     return;
   }
   const st = collectState();
+  st.incluirLogo = document.getElementById('incluirLogo')?.checked !== false;
   if (!st.cliente || st.valorAcao <= 0) {
     alert('Preencha o valor da ação e os dados das partes antes de exportar.');
     return;
@@ -977,8 +989,8 @@ async function exportarNotas() {
     for (let ii = 0; ii < indicesSel.length; ii++) {
       const i    = indicesSel[ii];
       const nota = r.notasIndividuais[i];
-      const { docXml, footnotesXml, footerXml } = gerarDocumentXml(r, st, nota);
-      const blob = await montarDocx(docXml, footnotesXml, footerXml, st.numProcesso);
+      const { docXml, footnotesXml, footerXml, comLogo } = gerarDocumentXml(r, st, nota);
+      const blob = await montarDocx(docXml, footnotesXml, footerXml, st.numProcesso, comLogo);
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
